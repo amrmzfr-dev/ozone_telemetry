@@ -5,8 +5,9 @@ from django.utils import timezone
 from django.db.models import Sum, Count, Min, Max
 from django.db.models.functions import TruncDate
 from datetime import datetime, timedelta
-from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics
-from .serializers import TelemetryRecordSerializer, TelemetryEventSerializer, DeviceStatusSerializer, UsageStatisticsSerializer
+from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics, Outlet, Machine
+from .serializers import TelemetryRecordSerializer, TelemetryEventSerializer, DeviceStatusSerializer, UsageStatisticsSerializer, OutletSerializer, MachineSerializer
+from django.db import transaction
 
 
 class TelemetryViewSet(mixins.CreateModelMixin,
@@ -78,6 +79,10 @@ def iot_ingest(request):
     count2 = request.data.get("count2")
     count3 = request.data.get("count3")
     device_timestamp = request.data.get("timestamp")
+    rtc_available_raw = request.data.get("rtc_available", None)
+    sd_available_raw = request.data.get("sd_available", None)
+    rtc_available = None if rtc_available_raw is None else str(rtc_available_raw).lower() == "true"
+    sd_available = None if sd_available_raw is None else str(sd_available_raw).lower() == "true"
 
     if not macaddr:
         return Response({"detail": "macaddr required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -94,6 +99,8 @@ def iot_ingest(request):
         device_id=str(macaddr),
         defaults={
             'wifi_connected': True,
+            'rtc_available': bool(rtc_available) if rtc_available is not None else False,
+            'sd_card_available': bool(sd_available) if sd_available is not None else False,
             'current_count_basic': _safe_number(count1) or 0,
             'current_count_standard': _safe_number(count2) or 0,
             'current_count_premium': _safe_number(count3) or 0,
@@ -103,6 +110,11 @@ def iot_ingest(request):
     
     if not created:
         device_status.wifi_connected = True
+        # Only update flags if provided in this request. This avoids event posts clearing flags.
+        if rtc_available is not None:
+            device_status.rtc_available = rtc_available
+        if sd_available is not None:
+            device_status.sd_card_available = sd_available
         device_status.current_count_basic = _safe_number(count1) or 0
         device_status.current_count_standard = _safe_number(count2) or 0
         device_status.current_count_premium = _safe_number(count3) or 0
@@ -124,27 +136,29 @@ def iot_ingest(request):
         },
     )
 
-    # Create telemetry event
+    # Determine event type (status = heartbeat)
     event_type = mode if mode in {"BASIC", "STANDARD", "PREMIUM", "status"} else "status"
-    
-    TelemetryEvent.objects.create(
-        device_id=str(macaddr),
-        event_type=event_type,
-        count_basic=_safe_number(count1),
-        count_standard=_safe_number(count2),
-        count_premium=_safe_number(count3),
-        occurred_at=occurred_at,
-        device_timestamp=device_timestamp,
-        wifi_status=True,
-        payload={
-            "type1": _safe_number(type1),
-            "type2": _safe_number(type2),
-            "type3": _safe_number(type3),
-        },
-    )
 
-    # Update daily statistics
-    _update_daily_statistics(str(macaddr), event_type, occurred_at)
+    # Persist events only for real triggers (exclude heartbeat "status")
+    if event_type != "status":
+        TelemetryEvent.objects.create(
+            device_id=str(macaddr),
+            event_type=event_type,
+            count_basic=_safe_number(count1),
+            count_standard=_safe_number(count2),
+            count_premium=_safe_number(count3),
+            occurred_at=occurred_at,
+            device_timestamp=device_timestamp,
+            wifi_status=True,
+            payload={
+                "type1": _safe_number(type1),
+                "type2": _safe_number(type2),
+                "type3": _safe_number(type3),
+            },
+        )
+
+        # Update daily statistics only for real events
+        _update_daily_statistics(str(macaddr), event_type, occurred_at)
 
     return Response({"status": "ok", "id": record.id})
 
@@ -154,7 +168,7 @@ def _parse_device_timestamp(value):
     try:
         if not value:
             return None
-        # ESP32 format: "2024-01-15 14:30:25"
+        # ESP32 format: "2024-01-15 14:30:25" - Now synced with NTP (Kuala Lumpur time)
         dt = datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
         return timezone.make_aware(dt)
     except Exception:
@@ -240,11 +254,11 @@ class TelemetryEventViewSet(mixins.ListModelMixin,
             date__lte=end_date
         ).order_by('date')
         
-        # Get recent events
+        # Get recent events (exclude heartbeats/status)
         recent_events = TelemetryEvent.objects.filter(
             device_id=device_id,
             occurred_at__gte=timezone.now() - timedelta(days=days)
-        ).order_by('-occurred_at')[:50]
+        ).exclude(event_type='status').order_by('-occurred_at')[:50]
         
         # Calculate totals
         total_events = daily_stats.aggregate(
@@ -282,6 +296,12 @@ class DeviceStatusViewSet(mixins.ListModelMixin,
         recent_threshold = timezone.now() - timedelta(minutes=5)
         online_devices = self.get_queryset().filter(last_seen__gte=recent_threshold)
         return Response(DeviceStatusSerializer(online_devices, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="all")
+    def all_devices(self, request):
+        """Get list of all devices (online and offline)"""
+        all_devices = self.get_queryset().order_by('-last_seen')
+        return Response(DeviceStatusSerializer(all_devices, many=True).data)
 
 
 @api_view(["GET"])
@@ -326,6 +346,24 @@ def export_data(request):
     return response
 
 
+@api_view(["POST"])
+@permission_classes([permissions.AllowAny])
+def flush_all_data(request):
+    """Dangerous: wipe all telemetry tables. Intended for admin/testing via UI button.
+
+    Deletes TelemetryEvent, TelemetryRecord, UsageStatistics, and DeviceStatus.
+    """
+    try:
+        with transaction.atomic():
+            TelemetryEvent.objects.all().delete()
+            TelemetryRecord.objects.all().delete()
+            UsageStatistics.objects.all().delete()
+            DeviceStatus.objects.all().delete()
+        return Response({"status": "flushed"})
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 def _safe_number(value):
     try:
         if value is None:
@@ -339,3 +377,71 @@ def _safe_number(value):
             return fv
         except Exception:
             return None
+
+
+class OutletViewSet(viewsets.ModelViewSet):
+    """CRUD operations for Outlets"""
+    queryset = Outlet.objects.all()
+    serializer_class = OutletSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        return qs
+
+
+class MachineViewSet(viewsets.ModelViewSet):
+    """CRUD operations for Machines"""
+    queryset = Machine.objects.select_related('outlet').all()
+    serializer_class = MachineSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        outlet_id = self.request.query_params.get('outlet_id')
+        is_active = self.request.query_params.get('is_active')
+        device_id = self.request.query_params.get('device_id')
+        
+        if outlet_id:
+            qs = qs.filter(outlet_id=outlet_id)
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        if device_id:
+            qs = qs.filter(device_id=device_id)
+        return qs
+    
+    @action(detail=False, methods=["get"], url_path="unregistered")
+    def unregistered_devices(self, request):
+        """Get devices that have telemetry data but are not registered as machines"""
+        registered_device_ids = set(Machine.objects.values_list('device_id', flat=True))
+        unregistered_devices = DeviceStatus.objects.exclude(device_id__in=registered_device_ids)
+        return Response(DeviceStatusSerializer(unregistered_devices, many=True).data)
+    
+    @action(detail=False, methods=["post"], url_path="register")
+    def register_device(self, request):
+        """Register a device as a machine to an outlet"""
+        device_id = request.data.get('device_id')
+        outlet_id = request.data.get('outlet_id')
+        name = request.data.get('name', '')
+        
+        if not device_id or not outlet_id:
+            return Response({"detail": "device_id and outlet_id required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            outlet = Outlet.objects.get(id=outlet_id)
+        except Outlet.DoesNotExist:
+            return Response({"detail": "Outlet not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if Machine.objects.filter(device_id=device_id).exists():
+            return Response({"detail": "Device already registered"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        machine = Machine.objects.create(
+            device_id=device_id,
+            outlet=outlet,
+            name=name or f"Machine {device_id[-6:]}"
+        )
+        
+        return Response(MachineSerializer(machine).data, status=status.HTTP_201_CREATED)

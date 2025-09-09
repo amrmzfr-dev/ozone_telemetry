@@ -9,8 +9,10 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <RTClib.h>
-#include <SD.h>
-#include <SPI.h>
+#include <time.h>
+#include <ArduinoOTA.h>
+// #include "SD.h"
+// #include <SPI.h>
 
 #define BUTTON_HARDRESET    0   // Default Push Button
 #define BASIC_PIN           13  // BASIC
@@ -22,11 +24,20 @@
 #define RTC_SDA_PIN         22  // SDA
 #define RTC_SCL_PIN         21  // SCL
 
-// SD Card Pins (SPI)
-#define SD_CS_PIN           5   // Chip Select
-#define SD_SCK_PIN          18  // Clock
-#define SD_MOSI_PIN         23  // Master Out Slave In
-#define SD_MISO_PIN         19  // Master In Slave Out
+// NTP Configuration for Kuala Lumpur (UTC+8)
+#define NTP_SERVER          "pool.ntp.org"
+#define GMT_OFFSET_SEC      (8 * 3600)  // UTC+8 for Kuala Lumpur
+#define DAYLIGHT_OFFSET_SEC 0           // No daylight saving in Malaysia
+
+// OTA Configuration
+#define OTA_HOSTNAME        "OzonTelemetry"
+#define OTA_PASSWORD        "ozon123"   // Change this password
+
+// SD Card Pins (SPI) - commented out for now
+// #define SD_CS_PIN           5   // Chip Select
+// #define SD_SCK_PIN          18  // Clock
+// #define SD_MOSI_PIN         23  // Master Out Slave In
+// #define SD_MISO_PIN         19  // Master In Slave Out
 
 uint16_t counter_basic    = 0;
 uint16_t counter_standard = 0;
@@ -67,9 +78,9 @@ bool trigger_premium = false;
 // RTC and SD Card variables
 RTC_DS3231 rtc;
 bool rtc_available = false;
-bool sd_available = false;
-String log_filename = "/usage_log.csv";
-String status_filename = "/status_log.csv";
+// bool sd_available = false;  // commented out for now
+// String log_filename = "/usage_log.csv";  // commented out for now
+// String status_filename = "/status_log.csv";  // commented out for now
 
 void init_ap(void);
 void init_webserver(void);
@@ -92,10 +103,14 @@ void init_wifi(void);
 void init_gpio(void);
 void init_counter(void);
 void init_rtc(void);
-void init_sd(void);
+void sync_rtc_time(void);
+void init_ntp(void);
+void sync_rtc_with_ntp(void);
+void init_ota(void);
+// void init_sd(void);  // commented out for now
 String get_timestamp(void);
-void log_usage_event(String machine_type, uint16_t count);
-void log_status_update(void);
-String get_historical_data(int days);
+// void log_usage_event(String machine_type, uint16_t count);  // commented out for now
+// void log_status_update(void);  // commented out for now
+// String get_historical_data(int days);  // commented out for now
 
 #endif

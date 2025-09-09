@@ -108,7 +108,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Use Kuala Lumpur time for server-local timezone handling
+TIME_ZONE = 'Asia/Kuala_Lumpur'
 
 USE_I18N = True
 

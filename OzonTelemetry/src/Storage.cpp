@@ -9,7 +9,7 @@ Storage::Storage(void) {
 
 
 bool Storage::format(void) {
-    if(LITTLEFS.format()) {
+    if(SPIFFS.format()) {
         return true;
     } else {
         return false;
@@ -18,7 +18,7 @@ bool Storage::format(void) {
 
 
 bool Storage::exists(String path) {
-    if(LITTLEFS.exists(path)) {
+    if(SPIFFS.exists(path)) {
         return true;
     } else {
         return false;
@@ -27,30 +27,30 @@ bool Storage::exists(String path) {
 
 
 bool Storage::begin(void) {
-    if(!LITTLEFS.begin(FORMAT_LITTLEFS_IF_FAILED)) {
-        Serial.println("LITTLEFS mount failed");
+    if(!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)) {
+        Serial.println("SPIFFS mount failed");
         return false;
     }
 
     // Demo and checking only
-    Storage::listDir(LITTLEFS, "/", 0);
+    Storage::listDir(SPIFFS, "/", 0);
 
     if(Storage::exists("/OZON")) {
         Serial.println(F("HEADER FOUND"));
     } else {
         Serial.println(F("HEADER NOT FOUND - Formatting now"));
         Storage::format();
-        Storage::writeFile(LITTLEFS, "/OZON", "");
+        Storage::writeFile(SPIFFS, "/OZON", "");
         load_defaults = true;
     }
     
     // Check Total storage
     Serial.print(F("Storage size: "));
-    Serial.print(LITTLEFS.totalBytes());
+    Serial.print(SPIFFS.totalBytes());
     Serial.println(F(" Bytes"));
 
     Serial.print(F("Storage used: " ));
-    Serial.print(LITTLEFS.usedBytes());
+    Serial.print(SPIFFS.usedBytes());
     Serial.println(F(" Bytes"));
     return true;
 }
@@ -74,7 +74,7 @@ void Storage::listDir(fs::FS &fs, const char * dirname, uint8_t levels){
         if(file.isDirectory()){
             Serial.print(F("  DIR : "));
 
-            #ifdef CONFIG_LITTLEFS_FOR_IDF_3_2
+            #ifdef CONFIG_SPIFFS_FOR_IDF_3_2
             Serial.println(file.name());
             #else
             Serial.print(file.name());
@@ -91,7 +91,7 @@ void Storage::listDir(fs::FS &fs, const char * dirname, uint8_t levels){
             Serial.print(file.name());
             Serial.print(F("  SIZE: "));
 
-            #ifdef CONFIG_LITTLEFS_FOR_IDF_3_2
+            #ifdef CONFIG_SPIFFS_FOR_IDF_3_2
             Serial.println(file.size());
             #else
             Serial.print(file.size());
@@ -165,7 +165,7 @@ void Storage::writeFile(fs::FS &fs, String path, String message){
 //void Storage::write_block(uint8_t * data, const char * path, uint32_t len){
 void Storage::write_block(const void * data, const char * path, uint32_t len){
     uint32_t i;
-    fs::FS &fs = LITTLEFS;
+    fs::FS &fs = SPIFFS;
     // Serial.println("write block 1");
     // Serial.print("FILE: ");
     // Serial.println(path);
@@ -193,7 +193,7 @@ void Storage::write_block(const void * data, const char * path, uint32_t len){
 
 void Storage::read_block(void * data, const char * path, uint32_t len){
     uint32_t i;
-    fs::FS &fs = LITTLEFS;
+    fs::FS &fs = SPIFFS;
 
     File file = fs.open(path);
     if(!file) {

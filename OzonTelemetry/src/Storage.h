@@ -2,17 +2,17 @@
 #define _Storage_H
 
 #include <Arduino.h>
-#include <LITTLEFS.h>
+#include <SPIFFS.h>
 
 #ifndef CONFIG_LITTLEFS_FOR_IDF_3_2
 #include <time.h>
 #endif
 
-/* You only need to format LITTLEFS the first time you run a
-   test or else use the LITTLEFS plugin to create a partition
-   https://github.com/lorol/arduino-esp32littlefs-plugin */
+/* You only need to format SPIFFS the first time you run a
+   test or else use the SPIFFS plugin to create a partition
+   https://github.com/me-no-dev/arduino-esp32fs-plugin */
 
-#define FORMAT_LITTLEFS_IF_FAILED true
+#define FORMAT_SPIFFS_IF_FAILED true
 
 
 class Storage {

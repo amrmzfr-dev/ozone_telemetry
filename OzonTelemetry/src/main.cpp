@@ -31,8 +31,14 @@ void setup() {
     // Setting up RTC
     init_rtc();
     
-    // Setting up SD Card
-    init_sd();
+    // Setting up NTP
+    init_ntp();
+    
+    // Setting up OTA
+    init_ota();
+    
+    // Setting up SD Card (commented out for now)
+    // init_sd();
 
     // Setting up Tasker
     init_task(); 
@@ -42,17 +48,17 @@ void setup() {
 void init_counter(void) {
     // if the respective counter file exists, read it and put to global variable.
     if(storage.exists(filename_basic_counter)) {
-        String counter_basic_str = storage.readFile(LITTLEFS, filename_basic_counter);
+        String counter_basic_str = storage.readFile(SPIFFS, filename_basic_counter);
         counter_basic_str.trim();
         counter_basic = counter_basic_str.toInt();
     } 
     if(storage.exists(filename_standard_counter)) {
-        String counter_standard_str = storage.readFile(LITTLEFS, filename_standard_counter);
+        String counter_standard_str = storage.readFile(SPIFFS, filename_standard_counter);
         counter_standard_str.trim();
         counter_standard = counter_standard_str.toInt();
     } 
     if(storage.exists(filename_premium_counter)) {
-        String counter_premium_str = storage.readFile(LITTLEFS, filename_premium_counter);
+        String counter_premium_str = storage.readFile(SPIFFS, filename_premium_counter);
         counter_premium_str.trim();
         counter_premium = counter_premium_str.toInt();
     } 
@@ -71,11 +77,11 @@ void init_wifi(void) {
     if(storage.exists(filename_ssid) && storage.exists(filename_pass)) {
         char ssid[128];
         char passphrase[128];
-        String ssid_string = storage.readFile(LITTLEFS, filename_ssid);
+        String ssid_string = storage.readFile(SPIFFS, filename_ssid);
         ssid_string.trim();
         ssid_string.toCharArray(ssid, ssid_string.length() + 1);
     
-        String pass_string = storage.readFile(LITTLEFS, filename_pass);
+        String pass_string = storage.readFile(SPIFFS, filename_pass);
         pass_string.trim();
         pass_string.toCharArray(passphrase, pass_string.length() + 1);
 
@@ -87,7 +93,7 @@ void init_wifi(void) {
         Serial.println("Initiate WiFi Connectivity." + cmd);
     } else {
         // Generate a default wifi and push to the system and reboot.
-        save_wifi_details("CZERORTR", "mesb1234");
+        save_wifi_details("testtest", "mb95z78y");
 
         // Restart it 
         ESP.restart();
@@ -99,31 +105,31 @@ void save_wifi_details(String ssid, String passphrase) {
     String filename = "/SSID";
 
     // We dont care is it exists...just override the file
-    storage.writeFile(LITTLEFS, filename, ssid);
+    storage.writeFile(SPIFFS, filename, ssid);
 
     filename = "/PASSPHRASE";
-    storage.writeFile(LITTLEFS, filename, passphrase);
+    storage.writeFile(SPIFFS, filename, passphrase);
 }
 
 
 void save_tracker_url(String url) {
     String filename = "/TRACKERURL";
-    storage.writeFile(LITTLEFS, filename, url);
+    storage.writeFile(SPIFFS, filename, url);
 }
 
 
 void save_counter(uint8_t counter_type) {
     switch(counter_type) {
         case COUNTER_BASIC:
-            storage.writeFile(LITTLEFS, filename_basic_counter, String(counter_basic));
+            storage.writeFile(SPIFFS, filename_basic_counter, String(counter_basic));
             break;
 
         case COUNTER_STANDARD:
-            storage.writeFile(LITTLEFS, filename_standard_counter, String(counter_standard));
+            storage.writeFile(SPIFFS, filename_standard_counter, String(counter_standard));
             break;
 
         case COUNTER_PREMIUM:
-            storage.writeFile(LITTLEFS, filename_premium_counter, String(counter_premium));
+            storage.writeFile(SPIFFS, filename_premium_counter, String(counter_premium));
             break;
     }
 }
@@ -157,17 +163,17 @@ void init_webserver(void) {
         String html_tracker = "";
         String filename = "/SSID";
         if(storage.exists(filename)) { 
-            html_ssid = storage.readFile(LITTLEFS, filename);
+            html_ssid = storage.readFile(SPIFFS, filename);
             html_ssid.trim();
         }
         filename = "/PASSPHRASE";
         if(storage.exists(filename)) { 
-            html_pass = storage.readFile(LITTLEFS, filename);
+            html_pass = storage.readFile(SPIFFS, filename);
             html_pass.trim();
         }
         filename = "/TRACKERURL";
         if(storage.exists(filename)) { 
-            html_tracker = storage.readFile(LITTLEFS, filename);
+            html_tracker = storage.readFile(SPIFFS, filename);
             html_tracker.trim();
         }
         
@@ -188,10 +194,14 @@ void init_webserver(void) {
         index_html_str = index_html_str + "<h3><b>Counter Settings:</b></h3><form method='POST' action='/setting' id='form_counter'><input type='hidden' name='form' value='counter'>BASIC:<input name='basic' value='" + String(counter_basic) + "'><br>STANDARD:<input name='standard' value='" + String(counter_standard) + "'><br>PREMIUM:<input name='premium' value='" + String(counter_premium) + "'><br><input type='submit' value='Update Counters'></form>";
         index_html_str = index_html_str + "<h3><b>System Status:</b></h3>";
         index_html_str = index_html_str + "<p>RTC: " + String(rtc_available ? "Available" : "Not Available") + "</p>";
-        index_html_str = index_html_str + "<p>SD Card: " + String(sd_available ? "Available" : "Not Available") + "</p>";
+        // index_html_str = index_html_str + "<p>SD Card: " + String(sd_available ? "Available" : "Not Available") + "</p>";  // commented out for now
         index_html_str = index_html_str + "<p>Current Time: " + get_timestamp() + "</p>";
+        index_html_str = index_html_str + "<h3><b>OTA Update:</b></h3>";
+        index_html_str = index_html_str + "<p>Hostname: " + String(OTA_HOSTNAME) + "</p>";
+        index_html_str = index_html_str + "<p>Password: " + String(OTA_PASSWORD) + "</p>";
+        index_html_str = index_html_str + "<p>Port: 3232</p>";
         index_html_str = index_html_str + "<h3><b>Data & Reports:</b></h3>";
-        index_html_str = index_html_str + "<p><a href='/history'>View Historical Data</a></p>";
+        // index_html_str = index_html_str + "<p><a href='/history'>View Historical Data</a></p>";  // commented out for now
         index_html_str = index_html_str + "<p><a href='/reboot'>Reboot Device</a></p></body></html>";
         // server.send(200, "text/html", index_html_str);
         send_body(index_html_str);
@@ -245,12 +255,12 @@ void init_webserver(void) {
         }
 
         if(form_post == 1) {
-            // Save the details to LITTLEFS
+            // Save the details to SPIFFS
             save_wifi_details(html_ssid, html_pass);    
 
             html = "Update WiFi: [" + html_ssid + "] [" + html_pass + "] Done.";
         } else if(form_post == 2) {
-            // Save the detail to LITTLEFS
+            // Save the detail to SPIFFS
             save_tracker_url(html_url);
 
             html = "Update Tracker URL: [" + html_url + "] Done.";
@@ -276,7 +286,16 @@ void init_webserver(void) {
         ESP.restart();
     });
 
-    // Historical data page
+    // Handling RTC SYNC
+    server.on("/sync", HTTP_GET, []() {
+        send_header();
+        sync_rtc_time();
+        String html = "RTC time synced. Current time: " + get_timestamp();
+        send_body(html);
+    });
+
+    // Historical data page (commented out for now)
+    /*
     server.on("/history", HTTP_GET, []() {
         send_header();
         String html = "<html><head><title>Historical Data - Ozon Telemetry</title><meta name='viewport' content='width=device-width,initial-scale=1'></head><body bgcolor='#EEEEEE'>";
@@ -299,6 +318,7 @@ void init_webserver(void) {
         html += "</body></html>";
         send_body(html);
     });
+    */
 
     server.begin();
 }
@@ -405,7 +425,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_basic_trigger = millis();
                     counter_basic++;
                     save_counter(COUNTER_BASIC);
-                    log_usage_event("BASIC", counter_basic);
+                    // log_usage_event("BASIC", counter_basic);  // commented out for now
                     Serial.print("Instant Counter (BASIC): "); Serial.println(counter_basic);
                     push_data_now = true;
                     trigger_basic = true;
@@ -421,7 +441,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_standard_trigger = millis();
                     counter_standard++;
                     save_counter(COUNTER_STANDARD);
-                    log_usage_event("STANDARD", counter_standard);
+                    // log_usage_event("STANDARD", counter_standard);  // commented out for now
                     Serial.print("Instant Counter (STANDARD): "); Serial.println(counter_standard);
                     push_data_now = true;
                     trigger_standard = true;
@@ -437,7 +457,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_premium_trigger = millis();
                     counter_premium++;
                     save_counter(COUNTER_PREMIUM);
-                    log_usage_event("PREMIUM", counter_premium);
+                    // log_usage_event("PREMIUM", counter_premium);  // commented out for now
                     Serial.print("Instant Counter (PREMIUM): "); Serial.println(counter_premium);
                     push_data_now = true;
                     trigger_premium = true;
@@ -474,9 +494,8 @@ void taskUpdater(void *pvParameters) {
     bool post_ok = false;
 
     for(;;) {
-        // Every 5 minutes update
-        if((uint32_t) (global_uptime - lastUpdate) > 299) {
-        // if((uint32_t) (global_uptime - lastUpdate) > 59) {
+        // Heartbeat: every 60 seconds
+        if((uint32_t) (global_uptime - lastUpdate) > 59) {
         // if((uint32_t) (global_uptime - lastUpdate) > 10) {
             // Preparing POST data
             String httpRequestData = "";
@@ -485,11 +504,11 @@ void taskUpdater(void *pvParameters) {
             // 1 = Basic
             // 2 = Standard
             // 3 = Premium
-            httpRequestData = "mode=status&macaddr=" + device_macaddr_str + "&type1=" + String(started_basic) + "&type2=" + String(started_standard) + "&type3=" + String(started_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp();
+            httpRequestData = "mode=status&macaddr=" + device_macaddr_str + "&type1=" + String(started_basic) + "&type2=" + String(started_standard) + "&type3=" + String(started_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp() + "&rtc_available=" + String(rtc_available ? "true" : "false") + "&sd_available=false";
                 
             HTTPClient http;
             // http.begin("http://209.97.170.88/iot/");
-            http.begin("http://iot.mesraekuiti.my/iot/");
+            http.begin("http://10.172.66.5:8000/api/iot/");
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
             // 5 Seconds timeout
@@ -507,7 +526,7 @@ void taskUpdater(void *pvParameters) {
             Serial.println("Updated.");
             
             // Log status to SD card
-            log_status_update();
+            // log_status_update();  // commented out for now
 
             lastUpdate = global_uptime;
         }
@@ -551,7 +570,7 @@ void taskPush(void *pvParameters) {
                 
                 HTTPClient http2;
                 // http2.begin("http://209.97.170.88/iot/");
-                http2.begin("http://iot.mesraekuiti.my/iot/");
+                http2.begin("http://10.172.66.5:8000/api/iot/");
                 http2.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
                 // 5 Seconds timeout
@@ -591,7 +610,7 @@ void taskUptime(void *pvParameters) {
 
 
 void reset_data(void) {
-    Serial.println("Clearing LITTLEFS.");
+    Serial.println("Clearing SPIFFS.");
     storage.format();
     Serial.println("Done. Rebooting now.");
     ESP.restart();
@@ -618,24 +637,23 @@ void taskHardReset(void *pvParameters) {
 
 void taskWiFi(void *pvParameters) {
     (void) pvParameters;
+    static bool was_connected = false;
 
-    // bool connected = false;
-    
     for(;;) {
         if(WiFi.status() == WL_CONNECTED) {
-            // Serial.println("WiFi Connected.");
-
-            // Serial.print("IP: ");
-            // Serial.println(WiFi.localIP());
-        
-            // connected = true;
+            if (!was_connected) {
+                Serial.println("WiFi Connected - syncing RTC with NTP");
+                sync_rtc_with_ntp();
+                was_connected = true;
+            }
             wifi_connected = true;
         } else {
-            // connected = false;
+            if (was_connected) {
+                Serial.println("WiFi disconnected");
+                was_connected = false;
+            }
             wifi_connected = false;
-            // Serial.println("WiFi disconnected.");
         }
-        // Delay another 500mS
         vTaskDelay(1000);
     }
 }
@@ -646,8 +664,11 @@ void taskServer(void *pvParameters) {
 
     for(;;) {
         server.handleClient();
+        
+        // Handle OTA updates
+        ArduinoOTA.handle();
           
-        // Delay another 500mS
+        // Delay another 100mS
         vTaskDelay(100);
     }
 }
@@ -726,16 +747,98 @@ void init_rtc(void) {
     }
     
     if (rtc.lostPower()) {
-        Serial.println("RTC lost power, setting time to compile time");
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+        Serial.println("RTC lost power, will sync with NTP when WiFi is connected");
+        // Don't set time here, wait for NTP sync
     }
     
     rtc_available = true;
     Serial.println("RTC initialized successfully");
-    Serial.print("Current time: ");
+    Serial.print("Current RTC time: ");
     Serial.println(get_timestamp());
 }
 
+void init_ntp(void) {
+    // Configure time with NTP
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+    Serial.println("NTP configured for Kuala Lumpur timezone (UTC+8)");
+}
+
+void sync_rtc_with_ntp(void) {
+    if (!rtc_available || !wifi_connected) {
+        Serial.println("Cannot sync RTC: RTC unavailable or WiFi not connected");
+        return;
+    }
+    
+    Serial.println("Syncing RTC with NTP...");
+    
+    // Wait for NTP time to be available
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        Serial.println("Failed to obtain NTP time");
+        return;
+    }
+    
+    // Convert to DateTime and adjust RTC
+    DateTime ntpTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                     timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    
+    rtc.adjust(ntpTime);
+    Serial.println("RTC synced with NTP successfully");
+    Serial.print("New RTC time: ");
+    Serial.println(get_timestamp());
+}
+
+void sync_rtc_time(void) {
+    // Legacy function - now uses NTP sync
+    sync_rtc_with_ntp();
+}
+
+void init_ota(void) {
+    // Set OTA hostname
+    ArduinoOTA.setHostname(OTA_HOSTNAME);
+    
+    // Set OTA password
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    
+    // Set OTA port (default 3232)
+    ArduinoOTA.setPort(3232);
+    
+    // Set OTA partition scheme
+    ArduinoOTA.setPartitionLabel("OTA");
+    
+    // OTA callbacks
+    ArduinoOTA.onStart([]() {
+        String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+        Serial.println("OTA Update started for " + type);
+        // Don't suspend all tasks - OTA needs the server task to keep running
+    });
+    
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nOTA Update completed");
+        // No need to resume tasks since we didn't suspend them
+    });
+    
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
+    });
+    
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("OTA Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+        // No need to resume tasks since we didn't suspend them
+    });
+    
+    ArduinoOTA.begin();
+    Serial.println("OTA initialized - Hostname: " + String(OTA_HOSTNAME));
+    Serial.println("OTA Password: " + String(OTA_PASSWORD));
+    Serial.println("Use Arduino IDE or PlatformIO to upload OTA updates");
+}
+
+/*
 void init_sd(void) {
     SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
     
@@ -767,6 +870,7 @@ void init_sd(void) {
         }
     }
 }
+*/
 
 String get_timestamp(void) {
     if (!rtc_available) {
@@ -781,6 +885,7 @@ String get_timestamp(void) {
     return String(timestamp);
 }
 
+/*
 void log_usage_event(String machine_type, uint16_t count) {
     if (!sd_available) {
         Serial.println("SD Card not available for logging");
@@ -797,7 +902,9 @@ void log_usage_event(String machine_type, uint16_t count) {
         Serial.println("Failed to open log file for writing");
     }
 }
+*/
 
+/*
 void log_status_update(void) {
     if (!sd_available) {
         Serial.println("SD Card not available for status logging");
@@ -819,7 +926,9 @@ void log_status_update(void) {
         Serial.println("Failed to open status file for writing");
     }
 }
+*/
 
+/*
 String get_historical_data(int days) {
     if (!sd_available) {
         return "SD Card not available";
@@ -849,6 +958,7 @@ String get_historical_data(int days) {
     result += "</table>";
     return result;
 }
+*/
 
 void loop() {
 }
