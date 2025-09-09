@@ -28,6 +28,12 @@ void setup() {
     // Setting up counter
     init_counter();
 
+    // Setting up RTC
+    init_rtc();
+    
+    // Setting up SD Card
+    init_sd();
+
     // Setting up Tasker
     init_task(); 
 }
@@ -178,8 +184,15 @@ void init_webserver(void) {
         }
 
         index_html_str = index_html_str + "<h3>Uptime:</h3> " + global_uptime_char + "<h3><b>WiFi:</b></h3>[" + html_ssid + "][" + html_pass + "] <form method='POST' action='/setting' id='form_ssid'><input type='hidden' name='form' value='wifi'>SSID:<input name='ssid'> Passphrase: <input name='passphrase'> <input type='submit' value='Update WiFi Settings'></form>";
-        index_html_str = index_html_str + "<h3><b>Tracker Server:</b></h3>[" + html_tracker + "]<form method='POST' action='/setting' id='form_server'><input type='hidden' name='form' value='tracker'>URL:<input name='url'> <input type='submit' value='Update Tracker URL'></form></body></html>";
-        index_html_str = index_html_str + "<h3><b>Counter Settings:</b></h3><form method='POST' action='/setting' id='form_counter'><input type='hidden' name='form' value='counter'>BASIC:<input name='basic' value='" + String(counter_basic) + "'><br>STANDARD:<input name='standard' value='" + String(counter_standard) + "'><br>PREMIUM:<input name='premium' value='" + String(counter_premium) + "'><br><input type='submit' value='Update Tracker URL'></form></body></html>";
+        index_html_str = index_html_str + "<h3><b>Tracker Server:</b></h3>[" + html_tracker + "]<form method='POST' action='/setting' id='form_server'><input type='hidden' name='form' value='tracker'>URL:<input name='url'> <input type='submit' value='Update Tracker URL'></form>";
+        index_html_str = index_html_str + "<h3><b>Counter Settings:</b></h3><form method='POST' action='/setting' id='form_counter'><input type='hidden' name='form' value='counter'>BASIC:<input name='basic' value='" + String(counter_basic) + "'><br>STANDARD:<input name='standard' value='" + String(counter_standard) + "'><br>PREMIUM:<input name='premium' value='" + String(counter_premium) + "'><br><input type='submit' value='Update Counters'></form>";
+        index_html_str = index_html_str + "<h3><b>System Status:</b></h3>";
+        index_html_str = index_html_str + "<p>RTC: " + String(rtc_available ? "Available" : "Not Available") + "</p>";
+        index_html_str = index_html_str + "<p>SD Card: " + String(sd_available ? "Available" : "Not Available") + "</p>";
+        index_html_str = index_html_str + "<p>Current Time: " + get_timestamp() + "</p>";
+        index_html_str = index_html_str + "<h3><b>Data & Reports:</b></h3>";
+        index_html_str = index_html_str + "<p><a href='/history'>View Historical Data</a></p>";
+        index_html_str = index_html_str + "<p><a href='/reboot'>Reboot Device</a></p></body></html>";
         // server.send(200, "text/html", index_html_str);
         send_body(index_html_str);
     });
@@ -261,6 +274,30 @@ void init_webserver(void) {
     server.on("/reboot", HTTP_GET, []() {
         send_header();
         ESP.restart();
+    });
+
+    // Historical data page
+    server.on("/history", HTTP_GET, []() {
+        send_header();
+        String html = "<html><head><title>Historical Data - Ozon Telemetry</title><meta name='viewport' content='width=device-width,initial-scale=1'></head><body bgcolor='#EEEEEE'>";
+        html += "<h2>Historical Data</h2>";
+        html += "<h3>Device: " + device_macaddr_str + "</h3>";
+        html += "<h3>Current Time: " + get_timestamp() + "</h3>";
+        html += "<p><a href='/setting'>Back to Settings</a></p>";
+        
+        // RTC and SD Card status
+        html += "<h3>System Status:</h3>";
+        html += "<p>RTC: " + String(rtc_available ? "Available" : "Not Available") + "</p>";
+        html += "<p>SD Card: " + String(sd_available ? "Available" : "Not Available") + "</p>";
+        
+        if (sd_available) {
+            html += get_historical_data(7); // Last 7 days
+        } else {
+            html += "<p>SD Card not available for historical data</p>";
+        }
+        
+        html += "</body></html>";
+        send_body(html);
     });
 
     server.begin();
@@ -368,6 +405,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_basic_trigger = millis();
                     counter_basic++;
                     save_counter(COUNTER_BASIC);
+                    log_usage_event("BASIC", counter_basic);
                     Serial.print("Instant Counter (BASIC): "); Serial.println(counter_basic);
                     push_data_now = true;
                     trigger_basic = true;
@@ -383,6 +421,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_standard_trigger = millis();
                     counter_standard++;
                     save_counter(COUNTER_STANDARD);
+                    log_usage_event("STANDARD", counter_standard);
                     Serial.print("Instant Counter (STANDARD): "); Serial.println(counter_standard);
                     push_data_now = true;
                     trigger_standard = true;
@@ -398,6 +437,7 @@ void taskMonitorBasic(void *pvParameters) {
                     last_premium_trigger = millis();
                     counter_premium++;
                     save_counter(COUNTER_PREMIUM);
+                    log_usage_event("PREMIUM", counter_premium);
                     Serial.print("Instant Counter (PREMIUM): "); Serial.println(counter_premium);
                     push_data_now = true;
                     trigger_premium = true;
@@ -445,7 +485,7 @@ void taskUpdater(void *pvParameters) {
             // 1 = Basic
             // 2 = Standard
             // 3 = Premium
-            httpRequestData = "mode=status&macaddr=" + device_macaddr_str + "&type1=" + String(started_basic) + "&type2=" + String(started_standard) + "&type3=" + String(started_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium);
+            httpRequestData = "mode=status&macaddr=" + device_macaddr_str + "&type1=" + String(started_basic) + "&type2=" + String(started_standard) + "&type3=" + String(started_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp();
                 
             HTTPClient http;
             // http.begin("http://209.97.170.88/iot/");
@@ -465,6 +505,9 @@ void taskUpdater(void *pvParameters) {
             }
 
             Serial.println("Updated.");
+            
+            // Log status to SD card
+            log_status_update();
 
             lastUpdate = global_uptime;
         }
@@ -504,7 +547,7 @@ void taskPush(void *pvParameters) {
                 trigger_standard = false;
                 trigger_premium = false;
 
-                httpRequestData = "mode=" + event_trigger + "&macaddr=" + device_macaddr_str + "&type1=" + String(total_on_time_basic) + "&type2=" + String(total_on_time_standard) + "&type3=" + String(total_on_time_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium);
+                httpRequestData = "mode=" + event_trigger + "&macaddr=" + device_macaddr_str + "&type1=" + String(total_on_time_basic) + "&type2=" + String(total_on_time_standard) + "&type3=" + String(total_on_time_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp();
                 
                 HTTPClient http2;
                 // http2.begin("http://209.97.170.88/iot/");
@@ -672,6 +715,140 @@ void init_ap(void) {
     Serial.println(IP);
 }
 
+
+void init_rtc(void) {
+    Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
+    
+    if (!rtc.begin()) {
+        Serial.println("RTC not found!");
+        rtc_available = false;
+        return;
+    }
+    
+    if (rtc.lostPower()) {
+        Serial.println("RTC lost power, setting time to compile time");
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+    
+    rtc_available = true;
+    Serial.println("RTC initialized successfully");
+    Serial.print("Current time: ");
+    Serial.println(get_timestamp());
+}
+
+void init_sd(void) {
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    
+    if (!SD.begin(SD_CS_PIN)) {
+        Serial.println("SD Card initialization failed!");
+        sd_available = false;
+        return;
+    }
+    
+    sd_available = true;
+    Serial.println("SD Card initialized successfully");
+    
+    // Create CSV headers if files don't exist
+    if (!SD.exists(log_filename)) {
+        File file = SD.open(log_filename, FILE_WRITE);
+        if (file) {
+            file.println("Timestamp,Machine_Type,Count,Device_MAC");
+            file.close();
+            Serial.println("Created usage log file");
+        }
+    }
+    
+    if (!SD.exists(status_filename)) {
+        File file = SD.open(status_filename, FILE_WRITE);
+        if (file) {
+            file.println("Timestamp,Basic_Count,Standard_Count,Premium_Count,WiFi_Status,Device_MAC");
+            file.close();
+            Serial.println("Created status log file");
+        }
+    }
+}
+
+String get_timestamp(void) {
+    if (!rtc_available) {
+        return "RTC_UNAVAILABLE";
+    }
+    
+    DateTime now = rtc.now();
+    char timestamp[25];
+    sprintf(timestamp, "%04d-%02d-%02d %02d:%02d:%02d", 
+            now.year(), now.month(), now.day(),
+            now.hour(), now.minute(), now.second());
+    return String(timestamp);
+}
+
+void log_usage_event(String machine_type, uint16_t count) {
+    if (!sd_available) {
+        Serial.println("SD Card not available for logging");
+        return;
+    }
+    
+    File file = SD.open(log_filename, FILE_APPEND);
+    if (file) {
+        String log_entry = get_timestamp() + "," + machine_type + "," + String(count) + "," + device_macaddr_str;
+        file.println(log_entry);
+        file.close();
+        Serial.println("Logged usage event: " + log_entry);
+    } else {
+        Serial.println("Failed to open log file for writing");
+    }
+}
+
+void log_status_update(void) {
+    if (!sd_available) {
+        Serial.println("SD Card not available for status logging");
+        return;
+    }
+    
+    File file = SD.open(status_filename, FILE_APPEND);
+    if (file) {
+        String status_entry = get_timestamp() + "," + 
+                             String(counter_basic) + "," + 
+                             String(counter_standard) + "," + 
+                             String(counter_premium) + "," + 
+                             (wifi_connected ? "CONNECTED" : "DISCONNECTED") + "," + 
+                             device_macaddr_str;
+        file.println(status_entry);
+        file.close();
+        Serial.println("Logged status update: " + status_entry);
+    } else {
+        Serial.println("Failed to open status file for writing");
+    }
+}
+
+String get_historical_data(int days) {
+    if (!sd_available) {
+        return "SD Card not available";
+    }
+    
+    String result = "<h3>Historical Usage Data (Last " + String(days) + " days)</h3>";
+    result += "<table border='1'><tr><th>Timestamp</th><th>Machine Type</th><th>Count</th></tr>";
+    
+    File file = SD.open(log_filename, FILE_READ);
+    if (!file) {
+        return "Failed to open log file";
+    }
+    
+    // Skip header line
+    file.readStringUntil('\n');
+    
+    // Read and filter data
+    while (file.available()) {
+        String line = file.readStringUntil('\n');
+        if (line.length() > 0) {
+            // Simple date filtering (you might want to implement proper date parsing)
+            result += "<tr><td>" + line + "</td></tr>";
+        }
+    }
+    
+    file.close();
+    result += "</table>";
+    return result;
+}
 
 void loop() {
 }

@@ -7,12 +7,26 @@
 #include <WiFi.h>
 #include <WiFiClient.h>                                                                                                                                                                  
 #include <WebServer.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <SD.h>
+#include <SPI.h>
 
 #define BUTTON_HARDRESET    0   // Default Push Button
 #define BASIC_PIN           13  // BASIC
 #define STANDARD_PIN        12  // STANDARD
 #define PREMIUM_PIN         14  // PREMIUM
 #define INDICATOR_PIN       2
+
+// RTC Pins (I2C)
+#define RTC_SDA_PIN         22  // SDA
+#define RTC_SCL_PIN         21  // SCL
+
+// SD Card Pins (SPI)
+#define SD_CS_PIN           5   // Chip Select
+#define SD_SCK_PIN          18  // Clock
+#define SD_MOSI_PIN         23  // Master Out Slave In
+#define SD_MISO_PIN         19  // Master In Slave Out
 
 uint16_t counter_basic    = 0;
 uint16_t counter_standard = 0;
@@ -50,6 +64,13 @@ bool trigger_basic = false;
 bool trigger_standard = false;
 bool trigger_premium = false;
 
+// RTC and SD Card variables
+RTC_DS3231 rtc;
+bool rtc_available = false;
+bool sd_available = false;
+String log_filename = "/usage_log.csv";
+String status_filename = "/status_log.csv";
+
 void init_ap(void);
 void init_webserver(void);
 void init_task(void);
@@ -70,5 +91,11 @@ void save_counter(uint8_t counter_type);
 void init_wifi(void);
 void init_gpio(void);
 void init_counter(void);
+void init_rtc(void);
+void init_sd(void);
+String get_timestamp(void);
+void log_usage_event(String machine_type, uint16_t count);
+void log_status_update(void);
+String get_historical_data(int days);
 
 #endif
