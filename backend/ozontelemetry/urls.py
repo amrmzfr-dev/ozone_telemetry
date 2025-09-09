@@ -18,15 +18,17 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
-from telemetry.views import TelemetryViewSet, TelemetryEventViewSet, iot_ingest
+from telemetry.views import TelemetryViewSet, TelemetryEventViewSet, DeviceStatusViewSet, iot_ingest, export_data
 
 router = DefaultRouter()
 router.register(r'telemetry', TelemetryViewSet, basename='telemetry')
 router.register(r'events', TelemetryEventViewSet, basename='events')
+router.register(r'devices', DeviceStatusViewSet, basename='devices')
 
 urlpatterns = [
     path('', lambda request: JsonResponse({"status": "ok", "service": "ozontelemetry", "api": "/api/"})),
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
-    path('api/iot', iot_ingest),
+    path('api/iot/', iot_ingest),
+    path('api/export/', export_data),
 ]
