@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: ozon-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"    # MQTT
+      - "9001:9001"    # WebSocket
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    environment:
+      - MOSQUITTO_USERNAME=ozon_telemetry
+      - MOSQUITTO_PASSWORD=ozon123

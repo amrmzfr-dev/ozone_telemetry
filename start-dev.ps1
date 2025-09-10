@@ -1,7 +1,7 @@
-# PowerShell script to start both frontend and backend
+# PowerShell script to start both frontend and backend servers
 # Run with: .\start-dev.ps1
 
-Write-Host "🚀 Starting Ozon Telemetry Development Environment..." -ForegroundColor Green
+Write-Host "🚀 Starting Ozon Telemetry Servers..." -ForegroundColor Green
 Write-Host ""
 
 # Check if Python is available
@@ -23,36 +23,6 @@ try {
 }
 
 Write-Host ""
-Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
-
-# Install backend dependencies
-Write-Host "Installing backend dependencies..." -ForegroundColor Cyan
-Set-Location backend
-pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Failed to install backend dependencies" -ForegroundColor Red
-    exit 1
-}
-
-# Install frontend dependencies
-Write-Host "Installing frontend dependencies..." -ForegroundColor Cyan
-Set-Location ../frontend
-npm install
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Failed to install frontend dependencies" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host ""
-Write-Host "🔧 Running database migrations..." -ForegroundColor Yellow
-Set-Location ../backend
-python manage.py migrate
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Failed to run database migrations" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host ""
 Write-Host "🎯 Starting servers..." -ForegroundColor Green
 Write-Host "Backend will run on: http://0.0.0.0:8000 (accessible from network)" -ForegroundColor Cyan
 Write-Host "Frontend will run on: http://localhost:5173" -ForegroundColor Cyan
@@ -61,11 +31,14 @@ Write-Host "Press Ctrl+C to stop both servers" -ForegroundColor Yellow
 Write-Host ""
 
 # Start backend in a new PowerShell window
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD'; python manage.py runserver 0.0.0.0:8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD\backend'; python manage.py runserver 0.0.0.0:8000"
+
+# Start MQTT client in a new PowerShell window
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD\backend'; python manage.py start_mqtt"
 
 # Wait a moment for backend to start
 Start-Sleep -Seconds 3
 
 # Start frontend in current window
-Set-Location ../frontend
+Set-Location frontend
 npm run dev

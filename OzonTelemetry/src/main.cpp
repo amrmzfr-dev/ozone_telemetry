@@ -37,6 +37,9 @@ void setup() {
     // Setting up OTA
     init_ota();
     
+    // Setting up MQTT
+    init_mqtt();
+    
     // Setting up SD Card (commented out for now)
     // init_sd();
 
@@ -194,8 +197,14 @@ void init_webserver(void) {
         index_html_str = index_html_str + "<h3><b>Counter Settings:</b></h3><form method='POST' action='/setting' id='form_counter'><input type='hidden' name='form' value='counter'>BASIC:<input name='basic' value='" + String(counter_basic) + "'><br>STANDARD:<input name='standard' value='" + String(counter_standard) + "'><br>PREMIUM:<input name='premium' value='" + String(counter_premium) + "'><br><input type='submit' value='Update Counters'></form>";
         index_html_str = index_html_str + "<h3><b>System Status:</b></h3>";
         index_html_str = index_html_str + "<p>RTC: " + String(rtc_available ? "Available" : "Not Available") + "</p>";
+        index_html_str = index_html_str + "<p>MQTT: " + String(mqtt_connected ? "Connected" : "Disconnected") + "</p>";
         // index_html_str = index_html_str + "<p>SD Card: " + String(sd_available ? "Available" : "Not Available") + "</p>";  // commented out for now
         index_html_str = index_html_str + "<p>Current Time: " + get_timestamp() + "</p>";
+        index_html_str = index_html_str + "<h3><b>MQTT Configuration:</b></h3>";
+        index_html_str = index_html_str + "<p>Broker: " + String(MQTT_SERVER) + ":" + String(MQTT_PORT) + "</p>";
+        index_html_str = index_html_str + "<p>Client ID: " + mqtt_client_id + "</p>";
+        index_html_str = index_html_str + "<p>Status Topic: " + mqtt_topic_status + "</p>";
+        index_html_str = index_html_str + "<p>Events Topic: " + mqtt_topic_events + "</p>";
         index_html_str = index_html_str + "<h3><b>OTA Update:</b></h3>";
         index_html_str = index_html_str + "<p>Hostname: " + String(OTA_HOSTNAME) + "</p>";
         index_html_str = index_html_str + "<p>Password: " + String(OTA_PASSWORD) + "</p>";
@@ -491,39 +500,24 @@ void taskUpdater(void *pvParameters) {
     (void) pvParameters;
 
     uint32_t lastUpdate = 0;    // In seconds
-    bool post_ok = false;
 
     for(;;) {
         // Heartbeat: every 60 seconds
         if((uint32_t) (global_uptime - lastUpdate) > 59) {
         // if((uint32_t) (global_uptime - lastUpdate) > 10) {
-            // Preparing POST data
-            String httpRequestData = "";
-
-            // Type:
-            // 1 = Basic
-            // 2 = Standard
-            // 3 = Premium
-            httpRequestData = "mode=status&macaddr=" + device_macaddr_str + "&type1=" + String(started_basic) + "&type2=" + String(started_standard) + "&type3=" + String(started_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp() + "&rtc_available=" + String(rtc_available ? "true" : "false") + "&sd_available=false";
-                
-            HTTPClient http;
-            // http.begin("http://209.97.170.88/iot/");
-            http.begin("http://10.172.66.5:8000/api/iot/");
-            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-            // 5 Seconds timeout
-            http.setTimeout(5000);
-
-            // Making Request
-            int httpCode = http.POST(httpRequestData);
-
-            if(httpCode > 0) {
-                post_ok = true;
-            } else {
-                post_ok = false;
+            // Reconnect MQTT if needed
+            if (!mqttClient.connected()) {
+                mqtt_connected = false;
+                mqtt_reconnect();
             }
-
-            Serial.println("Updated.");
+            
+            // Publish status via MQTT
+            if (mqtt_connected) {
+                publish_status();
+                Serial.println("Status published via MQTT.");
+            } else {
+                Serial.println("MQTT not connected, skipping status update.");
+            }
             
             // Log status to SD card
             // log_status_update();  // commented out for now
@@ -539,53 +533,44 @@ void taskPush(void *pvParameters) {
     (void) pvParameters;
 
     uint32_t lastUpdate = 0;    // In seconds
-    bool post_ok = false;
 
     for(;;) {
         // Every 100mS
         if((uint32_t) (millis() - lastUpdate) > 100) {
             if(push_data_now) {
-                // Preparing POST data
-                String httpRequestData = "";
-
-                // Type:
-                // 1 = Basic
-                // 2 = Standard
-                // 3 = Premium
+                // Reconnect MQTT if needed
+                if (!mqttClient.connected()) {
+                    mqtt_connected = false;
+                    mqtt_reconnect();
+                }
+                
+                // Determine event type
                 String event_trigger = "";
+                uint16_t count = 0;
 
                 if(trigger_basic) {
                     event_trigger = "BASIC";
+                    count = counter_basic;
                 } else if(trigger_standard) {
                     event_trigger = "STANDARD";
+                    count = counter_standard;
                 } else if(trigger_premium) {
                     event_trigger = "PREMIUM";
+                    count = counter_premium;
                 }
 
                 trigger_basic = false;
                 trigger_standard = false;
                 trigger_premium = false;
 
-                httpRequestData = "mode=" + event_trigger + "&macaddr=" + device_macaddr_str + "&type1=" + String(total_on_time_basic) + "&type2=" + String(total_on_time_standard) + "&type3=" + String(total_on_time_premium) + "&count1=" + String(counter_basic) + "&count2=" + String(counter_standard) + "&count3=" + String(counter_premium) + "&timestamp=" + get_timestamp();
-                
-                HTTPClient http2;
-                // http2.begin("http://209.97.170.88/iot/");
-                http2.begin("http://10.172.66.5:8000/api/iot/");
-                http2.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-                // 5 Seconds timeout
-                http2.setTimeout(5000);
-
-                // Making Request
-                int httpCode = http2.POST(httpRequestData);
-
-                if(httpCode > 0) {
-                    post_ok = true;
-                } else {
-                    post_ok = false;
+                // Publish event via MQTT
+                if (mqtt_connected && event_trigger != "") {
+                    publish_event(event_trigger, count);
+                    Serial.println("Event published via MQTT: " + event_trigger);
+                } else if (event_trigger != "") {
+                    Serial.println("MQTT not connected, skipping event: " + event_trigger);
                 }
 
-                Serial.println("Pushed.");
                 push_data_now = false;
             }
 
@@ -667,6 +652,17 @@ void taskServer(void *pvParameters) {
         
         // Handle OTA updates
         ArduinoOTA.handle();
+        
+        // Handle MQTT
+        if (wifi_connected) {
+            if (!mqttClient.connected()) {
+                mqtt_connected = false;
+                mqtt_reconnect();
+            } else {
+                mqtt_connected = true;
+                mqttClient.loop();
+            }
+        }
           
         // Delay another 100mS
         vTaskDelay(100);
@@ -959,6 +955,101 @@ String get_historical_data(int days) {
     return result;
 }
 */
+
+void init_mqtt(void) {
+    // Set up MQTT client
+    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+    mqttClient.setCallback(mqtt_callback);
+    
+    // Create unique client ID with MAC address
+    mqtt_client_id = String(MQTT_CLIENT_ID) + device_macaddr_str;
+    mqtt_topic_status = String(MQTT_TOPIC_STATUS) + device_macaddr_str;
+    mqtt_topic_events = String(MQTT_TOPIC_EVENTS) + device_macaddr_str;
+    mqtt_topic_commands = String(MQTT_TOPIC_COMMANDS) + device_macaddr_str;
+    
+    Serial.println("MQTT initialized - Client ID: " + mqtt_client_id);
+    Serial.println("Status topic: " + mqtt_topic_status);
+    Serial.println("Events topic: " + mqtt_topic_events);
+    Serial.println("Commands topic: " + mqtt_topic_commands);
+}
+
+void mqtt_reconnect(void) {
+    while (!mqttClient.connected() && wifi_connected) {
+        Serial.print("Attempting MQTT connection...");
+        
+        // Attempt to connect
+        if (mqttClient.connect(mqtt_client_id.c_str(), MQTT_USERNAME, MQTT_PASSWORD)) {
+            Serial.println("connected");
+            mqtt_connected = true;
+            
+            // Subscribe to commands topic
+            mqttClient.subscribe(mqtt_topic_commands.c_str());
+            Serial.println("Subscribed to: " + mqtt_topic_commands);
+            
+            // Publish initial status
+            publish_status();
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient.state());
+            Serial.println(" try again in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+    String message = "";
+    for (int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+    
+    Serial.println("MQTT Message received on topic: " + String(topic));
+    Serial.println("Message: " + message);
+    
+    // Process commands here if needed
+    // For now, just log the received command
+}
+
+void publish_status(void) {
+    if (!mqtt_connected) return;
+    
+    // Create JSON status message
+    String statusMessage = "{";
+    statusMessage += "\"device_id\":\"" + device_macaddr_str + "\",";
+    statusMessage += "\"timestamp\":\"" + get_timestamp() + "\",";
+    statusMessage += "\"type\":\"status\",";
+    statusMessage += "\"data\":{";
+    statusMessage += "\"basic_count\":" + String(counter_basic) + ",";
+    statusMessage += "\"standard_count\":" + String(counter_standard) + ",";
+    statusMessage += "\"premium_count\":" + String(counter_premium) + ",";
+    statusMessage += "\"wifi_connected\":" + String(wifi_connected ? "true" : "false") + ",";
+    statusMessage += "\"rtc_available\":" + String(rtc_available ? "true" : "false");
+    statusMessage += "}";
+    statusMessage += "}";
+    
+    // Publish status
+    mqttClient.publish(mqtt_topic_status.c_str(), statusMessage.c_str());
+    Serial.println("Published status: " + statusMessage);
+}
+
+void publish_event(String event_type, uint16_t count) {
+    if (!mqtt_connected) return;
+    
+    // Create JSON event message
+    String eventMessage = "{";
+    eventMessage += "\"device_id\":\"" + device_macaddr_str + "\",";
+    eventMessage += "\"timestamp\":\"" + get_timestamp() + "\",";
+    eventMessage += "\"type\":\"event\",";
+    eventMessage += "\"data\":{";
+    eventMessage += "\"event_type\":\"" + event_type + "\",";
+    eventMessage += "\"count\":" + String(count);
+    eventMessage += "}";
+    eventMessage += "}";
+    
+    // Publish event
+    mqttClient.publish(mqtt_topic_events.c_str(), eventMessage.c_str());
+    Serial.println("Published event: " + eventMessage);
+}
 
 void loop() {
 }

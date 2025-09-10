@@ -124,6 +124,15 @@ STATIC_URL = 'static/'
 CORS_ALLOW_ALL_ORIGINS = True
 CSRF_TRUSTED_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000']
 
+# MQTT Configuration
+MQTT_BROKER = 'broker.hivemq.com'  # Free public broker for testing
+MQTT_PORT = 1883
+MQTT_USERNAME = ''  # Leave empty for public broker
+MQTT_PASSWORD = ''  # Leave empty for public broker
+MQTT_TOPIC_STATUS = 'telemetry/status/'
+MQTT_TOPIC_EVENTS = 'telemetry/events/'
+MQTT_TOPIC_COMMANDS = 'telemetry/commands/'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

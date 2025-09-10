@@ -11,6 +11,7 @@
 #include <RTClib.h>
 #include <time.h>
 #include <ArduinoOTA.h>
+#include <PubSubClient.h>
 // #include "SD.h"
 // #include <SPI.h>
 
@@ -32,6 +33,16 @@
 // OTA Configuration
 #define OTA_HOSTNAME        "OzonTelemetry"
 #define OTA_PASSWORD        "ozon123"   // Change this password
+
+// MQTT Configuration
+#define MQTT_SERVER         "broker.hivemq.com"  // Free public broker for testing
+#define MQTT_PORT           1883
+#define MQTT_USERNAME       ""  // Leave empty for public broker
+#define MQTT_PASSWORD       ""  // Leave empty for public broker
+#define MQTT_CLIENT_ID      "OzonTelemetry_"
+#define MQTT_TOPIC_STATUS   "telemetry/status/"
+#define MQTT_TOPIC_EVENTS   "telemetry/events/"
+#define MQTT_TOPIC_COMMANDS "telemetry/commands/"
 
 // SD Card Pins (SPI) - commented out for now
 // #define SD_CS_PIN           5   // Chip Select
@@ -82,6 +93,15 @@ bool rtc_available = false;
 // String log_filename = "/usage_log.csv";  // commented out for now
 // String status_filename = "/status_log.csv";  // commented out for now
 
+// MQTT variables
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+bool mqtt_connected = false;
+String mqtt_client_id;
+String mqtt_topic_status;
+String mqtt_topic_events;
+String mqtt_topic_commands;
+
 void init_ap(void);
 void init_webserver(void);
 void init_task(void);
@@ -107,6 +127,11 @@ void sync_rtc_time(void);
 void init_ntp(void);
 void sync_rtc_with_ntp(void);
 void init_ota(void);
+void init_mqtt(void);
+void mqtt_reconnect(void);
+void mqtt_callback(char* topic, byte* payload, unsigned int length);
+void publish_status(void);
+void publish_event(String event_type, uint16_t count);
 // void init_sd(void);  // commented out for now
 String get_timestamp(void);
 // void log_usage_event(String machine_type, uint16_t count);  // commented out for now

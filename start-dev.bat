@@ -1,8 +1,8 @@
 @echo off
-REM Batch script to start both frontend and backend
+REM Batch script to start both frontend and backend servers
 REM Run with: start-dev.bat
 
-echo 🚀 Starting Ozon Telemetry Development Environment...
+echo 🚀 Starting Ozon Telemetry Servers...
 echo.
 
 REM Check if Python is available
@@ -24,39 +24,6 @@ if %errorlevel% neq 0 (
 echo ✅ Node.js found
 
 echo.
-echo 📦 Installing dependencies...
-
-REM Install backend dependencies
-echo Installing backend dependencies...
-cd backend
-pip install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo ❌ Failed to install backend dependencies
-    pause
-    exit /b 1
-)
-
-REM Install frontend dependencies
-echo Installing frontend dependencies...
-cd ..\frontend
-npm install
-if %errorlevel% neq 0 (
-    echo ❌ Failed to install frontend dependencies
-    pause
-    exit /b 1
-)
-
-echo.
-echo 🔧 Running database migrations...
-cd ..\backend
-python manage.py migrate
-if %errorlevel% neq 0 (
-    echo ❌ Failed to run database migrations
-    pause
-    exit /b 1
-)
-
-echo.
 echo 🎯 Starting servers...
 echo Backend will run on: http://0.0.0.0:8000 (accessible from network)
 echo Frontend will run on: http://localhost:5173
@@ -65,11 +32,14 @@ echo Press Ctrl+C to stop both servers
 echo.
 
 REM Start backend in a new window
-start "Backend Server" cmd /k "python manage.py runserver 0.0.0.0:8000"
+start "Backend Server" cmd /k "cd backend && python manage.py runserver 0.0.0.0:8000"
+
+REM Start MQTT client in a new window
+start "MQTT Client" cmd /k "cd backend && python manage.py start_mqtt"
 
 REM Wait a moment for backend to start
 timeout /t 3 /nobreak >nul
 
 REM Start frontend in current window
-cd ..\frontend
+cd frontend
 npm run dev
