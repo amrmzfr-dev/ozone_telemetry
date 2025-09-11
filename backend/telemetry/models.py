@@ -65,6 +65,37 @@ class DeviceStatus(models.Model):
 
     def __str__(self) -> str:
         return f"{self.device_id} - Last seen: {self.last_seen}"
+    
+    def get_accumulated_basic_count(self):
+        """Get accumulated basic count from database events"""
+        from django.db.models import Count
+        return TelemetryEvent.objects.filter(
+            device_id=self.device_id,
+            event_type='BASIC'
+        ).count()
+    
+    def get_accumulated_standard_count(self):
+        """Get accumulated standard count from database events"""
+        from django.db.models import Count
+        return TelemetryEvent.objects.filter(
+            device_id=self.device_id,
+            event_type='STANDARD'
+        ).count()
+    
+    def get_accumulated_premium_count(self):
+        """Get accumulated premium count from database events"""
+        from django.db.models import Count
+        return TelemetryEvent.objects.filter(
+            device_id=self.device_id,
+            event_type='PREMIUM'
+        ).count()
+    
+    def update_accumulated_counts(self):
+        """Update the current counts with accumulated values from database"""
+        self.current_count_basic = self.get_accumulated_basic_count()
+        self.current_count_standard = self.get_accumulated_standard_count()
+        self.current_count_premium = self.get_accumulated_premium_count()
+        self.save()
 
 
 class UsageStatistics(models.Model):
@@ -105,8 +136,7 @@ class Outlet(models.Model):
 
 
 class Machine(models.Model):
-    """Machine registered to an outlet"""
-    device_id = models.CharField(max_length=128, unique=True, db_index=True)
+    """Machine registered to an outlet - can have multiple devices over time"""
     outlet = models.ForeignKey(Outlet, on_delete=models.CASCADE, related_name='machines')
     name = models.CharField(max_length=200, null=True, blank=True)
     machine_type = models.CharField(max_length=50, default='Ozone Generator')
@@ -118,7 +148,43 @@ class Machine(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ["outlet__name", "name", "device_id"]
+        ordering = ["outlet__name", "name"]
     
     def __str__(self) -> str:
-        return f"{self.name or self.device_id} @ {self.outlet.name}"
+        return f"{self.name or f'Machine-{self.id}'} @ {self.outlet.name}"
+    
+    @property
+    def current_device(self):
+        """Get the currently active device for this machine"""
+        return self.devices.filter(is_active=True).first()
+    
+    @property
+    def current_device_id(self):
+        """Get the device_id of the currently active device"""
+        current = self.current_device
+        return current.device_id if current else None
+
+
+class MachineDevice(models.Model):
+    """Device (ESP32) assigned to a machine - supports multiple devices per machine over time"""
+    machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='devices')
+    device_id = models.CharField(max_length=128, db_index=True)
+    is_active = models.BooleanField(default=True)
+    assigned_date = models.DateTimeField(auto_now_add=True)
+    deactivated_date = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ["-is_active", "-assigned_date"]
+        unique_together = ['machine', 'device_id']  # Same device can't be assigned to same machine twice
+    
+    def __str__(self) -> str:
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.device_id} ({status}) - {self.machine.name}"
+    
+    def deactivate(self):
+        """Deactivate this device"""
+        from django.utils import timezone
+        self.is_active = False
+        self.deactivated_date = timezone.now()
+        self.save()

@@ -546,17 +546,14 @@ void taskPush(void *pvParameters) {
                 
                 // Determine event type
                 String event_trigger = "";
-                uint16_t count = 0;
+                uint16_t count = 1;  // Always send 1 for each event
 
                 if(trigger_basic) {
                     event_trigger = "BASIC";
-                    count = counter_basic;
                 } else if(trigger_standard) {
                     event_trigger = "STANDARD";
-                    count = counter_standard;
                 } else if(trigger_premium) {
                     event_trigger = "PREMIUM";
-                    count = counter_premium;
                 }
 
                 trigger_basic = false;

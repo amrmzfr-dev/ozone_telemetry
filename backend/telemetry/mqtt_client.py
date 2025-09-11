@@ -64,9 +64,9 @@ class MQTTClient:
             device_status, created = DeviceStatus.objects.get_or_create(
                 device_id=device_id,
                 defaults={
-                    'basic_count': data.get('basic_count', 0),
-                    'standard_count': data.get('standard_count', 0),
-                    'premium_count': data.get('premium_count', 0),
+                    'current_count_basic': data.get('basic_count', 0),
+                    'current_count_standard': data.get('standard_count', 0),
+                    'current_count_premium': data.get('premium_count', 0),
                     'wifi_connected': data.get('wifi_connected', False),
                     'rtc_available': data.get('rtc_available', False),
                     'last_seen': datetime.now()
@@ -75,9 +75,9 @@ class MQTTClient:
             
             if not created:
                 # Update existing status
-                device_status.basic_count = data.get('basic_count', device_status.basic_count)
-                device_status.standard_count = data.get('standard_count', device_status.standard_count)
-                device_status.premium_count = data.get('premium_count', device_status.premium_count)
+                device_status.current_count_basic = data.get('basic_count', device_status.current_count_basic)
+                device_status.current_count_standard = data.get('standard_count', device_status.current_count_standard)
+                device_status.current_count_premium = data.get('premium_count', device_status.current_count_premium)
                 device_status.wifi_connected = data.get('wifi_connected', device_status.wifi_connected)
                 device_status.rtc_available = data.get('rtc_available', device_status.rtc_available)
                 device_status.last_seen = datetime.now()
@@ -96,14 +96,35 @@ class MQTTClient:
             count = data.get('count', 0)
             
             # Create telemetry event
-            TelemetryEvent.objects.create(
-                device_id=device_id,
-                event_type=event_type,
-                count=count,
-                timestamp=datetime.now()
-            )
+            # The count field represents the number of events (always 1 for each button press)
+            # Store it in the appropriate count field based on event type
+            event_data = {
+                'device_id': device_id,
+                'event_type': event_type,
+                'occurred_at': datetime.now(),
+                'device_timestamp': payload.get('timestamp', ''),
+                'payload': payload
+            }
+            
+            # Set the count field based on event type
+            if event_type == 'BASIC':
+                event_data['count_basic'] = count
+            elif event_type == 'STANDARD':
+                event_data['count_standard'] = count
+            elif event_type == 'PREMIUM':
+                event_data['count_premium'] = count
+            
+            TelemetryEvent.objects.create(**event_data)
             
             logger.info(f"Created event for device {device_id}: {event_type} count={count}")
+            
+            # Update accumulated counts for this device
+            try:
+                device_status = DeviceStatus.objects.get(device_id=device_id)
+                device_status.update_accumulated_counts()
+                logger.info(f"Updated accumulated counts for device {device_id}")
+            except DeviceStatus.DoesNotExist:
+                logger.warning(f"Device status not found for {device_id}")
             
         except Exception as e:
             logger.error(f"Error handling event message: {e}")
@@ -114,12 +135,21 @@ class MQTTClient:
             if settings.MQTT_USERNAME and settings.MQTT_PASSWORD:
                 self.client.username_pw_set(settings.MQTT_USERNAME, settings.MQTT_PASSWORD)
             
-            self.client.connect(settings.MQTT_BROKER, settings.MQTT_PORT, 60)
-            self.client.loop_start()
             logger.info(f"Connecting to MQTT broker: {settings.MQTT_BROKER}:{settings.MQTT_PORT}")
+            result = self.client.connect(settings.MQTT_BROKER, settings.MQTT_PORT, 60)
+            
+            if result == 0:
+                self.client.loop_start()
+                # Wait for connection callback to set self.connected
+                import time
+                time.sleep(2)
+            else:
+                logger.error(f"Failed to connect to MQTT broker. Result: {result}")
+                self.connected = False
             
         except Exception as e:
             logger.error(f"Failed to connect to MQTT broker: {e}")
+            self.connected = False
     
     def disconnect(self):
         """Disconnect from MQTT broker"""

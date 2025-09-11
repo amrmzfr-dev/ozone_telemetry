@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics, Outlet, Machine
+from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics, Outlet, Machine, MachineDevice
 
 
 class TelemetryRecordSerializer(serializers.ModelSerializer):
@@ -36,6 +36,11 @@ class TelemetryEventSerializer(serializers.ModelSerializer):
 
 
 class DeviceStatusSerializer(serializers.ModelSerializer):
+    # Override the count fields to return accumulated values
+    current_count_basic = serializers.SerializerMethodField()
+    current_count_standard = serializers.SerializerMethodField()
+    current_count_premium = serializers.SerializerMethodField()
+    
     class Meta:
         model = DeviceStatus
         fields = [
@@ -50,6 +55,15 @@ class DeviceStatusSerializer(serializers.ModelSerializer):
             "uptime_seconds",
             "device_timestamp",
         ]
+    
+    def get_current_count_basic(self, obj):
+        return obj.get_accumulated_basic_count()
+    
+    def get_current_count_standard(self, obj):
+        return obj.get_accumulated_standard_count()
+    
+    def get_current_count_premium(self, obj):
+        return obj.get_accumulated_premium_count()
 
 
 class UsageStatisticsSerializer(serializers.ModelSerializer):
@@ -89,16 +103,42 @@ class OutletSerializer(serializers.ModelSerializer):
         return obj.machines.filter(is_active=True).count()
 
 
+class MachineDeviceSerializer(serializers.ModelSerializer):
+    device_status = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MachineDevice
+        fields = [
+            "id",
+            "device_id",
+            "is_active",
+            "assigned_date",
+            "deactivated_date",
+            "notes",
+            "device_status"
+        ]
+    
+    def get_device_status(self, obj):
+        """Get device status for this device"""
+        try:
+            device_status = DeviceStatus.objects.get(device_id=obj.device_id)
+            return DeviceStatusSerializer(device_status).data
+        except DeviceStatus.DoesNotExist:
+            return None
+
+
 class MachineSerializer(serializers.ModelSerializer):
     outlet_name = serializers.CharField(source='outlet.name', read_only=True)
     outlet_location = serializers.CharField(source='outlet.location', read_only=True)
+    current_device_id = serializers.ReadOnlyField()
+    devices = MachineDeviceSerializer(many=True, read_only=True)
+    current_device = serializers.SerializerMethodField()
     device_status = serializers.SerializerMethodField()
     
     class Meta:
         model = Machine
         fields = [
             "id",
-            "device_id",
             "outlet",
             "outlet_name",
             "outlet_location",
@@ -110,14 +150,27 @@ class MachineSerializer(serializers.ModelSerializer):
             "notes",
             "created_at",
             "updated_at",
-            "device_status",
+            "current_device_id",
+            "devices",
+            "current_device",
+            "device_status"
         ]
     
+    def get_current_device(self, obj):
+        """Get the currently active device"""
+        current = obj.current_device
+        if current:
+            return MachineDeviceSerializer(current).data
+        return None
+    
     def get_device_status(self, obj):
-        try:
-            from .models import DeviceStatus
-            status = DeviceStatus.objects.get(device_id=obj.device_id)
-            return DeviceStatusSerializer(status).data
-        except DeviceStatus.DoesNotExist:
-            return None
+        """Get device status for the currently active device"""
+        current = obj.current_device
+        if current:
+            try:
+                device_status = DeviceStatus.objects.get(device_id=current.device_id)
+                return DeviceStatusSerializer(device_status).data
+            except DeviceStatus.DoesNotExist:
+                return None
+        return None
 

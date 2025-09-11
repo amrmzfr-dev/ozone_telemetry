@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { ArrowLeft, Calendar, TrendingUp, BarChart3, PieChart as PieChartIcon, Activity } from 'lucide-react';
-import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, differenceInCalendarDays, startOfYear, addMonths, subMonths, getDaysInMonth, getDay, startOfDay } from 'date-fns';
+import { ArrowLeft, Calendar, TrendingUp, BarChart3, Activity } from 'lucide-react';
+import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, differenceInCalendarDays, startOfYear, addMonths, subMonths, subDays, subYears } from 'date-fns';
 import axios from 'axios';
+import Footer from '../components/Footer';
 
-const api = axios.create({ baseURL: 'http://10.172.66.5:8000/api' });
+const api = axios.create({ baseURL: 'http://10.115.106.5:8000/api' });
 
 interface Device {
   device_id: string;
@@ -27,9 +28,18 @@ interface Outlet {
   machine_count: number;
 }
 
-interface Machine {
+interface MachineDevice {
   id: number;
   device_id: string;
+  is_active: boolean;
+  assigned_date: string;
+  deactivated_date: string | null;
+  notes: string | null;
+  device_status: Device | null;
+}
+
+interface Machine {
+  id: number;
   outlet: number;
   outlet_name: string;
   outlet_location: string;
@@ -41,6 +51,9 @@ interface Machine {
   notes: string;
   created_at: string;
   updated_at: string;
+  current_device_id: string | null;
+  devices: MachineDevice[];
+  current_device: MachineDevice | null;
   device_status: Device | null;
 }
 
@@ -71,6 +84,8 @@ interface Analytics {
     count_basic: number;
     count_standard: number;
     count_premium: number;
+    device_id?: string;
+    device?: string;
   }>;
 }
 
@@ -83,7 +98,6 @@ const Charts: React.FC = () => {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>('week');
   const [chartType, setChartType] = useState<ChartType>('bar');
   const [selectedOutlet, setSelectedOutlet] = useState<number | null>(null);
@@ -91,8 +105,6 @@ const Charts: React.FC = () => {
   const [viewMode, setViewMode] = useState<'all' | 'outlet' | 'device'>('all');
   const [startDate, setStartDate] = useState<string>(format(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-  const [tempStartDate, setTempStartDate] = useState<string>(format(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'));
-  const [tempEndDate, setTempEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [showDateModal, setShowDateModal] = useState(false);
   const [calendarDate, setCalendarDate] = useState<Date>(new Date());
@@ -256,7 +268,7 @@ const Charts: React.FC = () => {
     }
     if (viewMode === 'outlet' && selectedOutlet) {
       const outletMachines = machines.filter(m => m.outlet === selectedOutlet);
-      const outletDeviceIds = outletMachines.map(m => m.device_id);
+      const outletDeviceIds = outletMachines.map(m => m.current_device_id).filter(Boolean);
       return devices.filter(d => outletDeviceIds.includes(d.device_id));
     }
     return devices;
@@ -277,7 +289,7 @@ const Charts: React.FC = () => {
       const res = await api.get('/events/analytics/', { params: { device_id: deviceId, days } })
       setAnalytics(res.data)
     } catch {
-      setError('Failed to fetch analytics')
+      console.error('Failed to fetch analytics')
     } finally { setLoading(false) }
   }, [period, startDate, endDate])
 
@@ -327,8 +339,23 @@ const Charts: React.FC = () => {
           standard: 0,
           premium: 0
         },
-        daily_stats: [] as any[],
-        recent_events: [] as any[]
+        daily_stats: [] as Array<{
+          date: string;
+          basic_count: number;
+          standard_count: number;
+          premium_count: number;
+          total_events: number;
+        }>,
+        recent_events: [] as Array<{
+          event_type: string;
+          occurred_at: string;
+          device_timestamp: string;
+          count_basic: number;
+          count_standard: number;
+          count_premium: number;
+          device_id?: string;
+          device?: string;
+        }>
       }
 
       // Aggregate totals
@@ -345,7 +372,13 @@ const Charts: React.FC = () => {
       const dailyStatsMap = new Map()
       responses.forEach(response => {
         if (response.data?.daily_stats) {
-          response.data.daily_stats.forEach((stat: any) => {
+          response.data.daily_stats.forEach((stat: {
+            date: string;
+            basic_count: number;
+            standard_count: number;
+            premium_count: number;
+            total_events: number;
+          }) => {
             const existing = dailyStatsMap.get(stat.date) || {
               date: stat.date,
               basic_count: 0,
@@ -366,10 +399,33 @@ const Charts: React.FC = () => {
       )
 
       // Aggregate recent events (limit to 50 most recent)
-      const allRecentEvents: any[] = []
-      responses.forEach(response => {
+      const allRecentEvents: Array<{
+        event_type: string;
+        occurred_at: string;
+        device_timestamp: string;
+        count_basic: number;
+        count_standard: number;
+        count_premium: number;
+        device_id?: string;
+        device?: string;
+      }> = []
+      responses.forEach((response, index) => {
         if (response.data?.recent_events) {
-          allRecentEvents.push(...response.data.recent_events)
+          // Preserve device_id information from the original device
+          const deviceId = filteredDevices[index]?.device_id
+          const eventsWithDeviceId = response.data.recent_events.map((event: {
+            event_type: string;
+            occurred_at: string;
+            device_timestamp: string;
+            count_basic: number;
+            count_standard: number;
+            count_premium: number;
+          }) => ({
+            ...event,
+            device_id: deviceId,
+            device: deviceId // Add both for compatibility
+          }))
+          allRecentEvents.push(...eventsWithDeviceId)
         }
       })
       aggregatedData.recent_events = allRecentEvents
@@ -378,11 +434,11 @@ const Charts: React.FC = () => {
 
       setAnalytics(aggregatedData)
     } catch {
-      setError('Failed to fetch aggregated analytics')
+      console.error('Failed to fetch aggregated analytics')
     } finally { 
       setLoading(false) 
     }
-  }, [period, viewMode, selectedDevice, selectedOutlet, machines, devices, fetchAnalytics, getFilteredDevices, startDate, endDate])
+  }, [period, viewMode, selectedDevice, selectedOutlet, fetchAnalytics, getFilteredDevices, startDate, endDate])
 
   useEffect(() => {
     const loadData = async () => {
@@ -669,7 +725,7 @@ const Charts: React.FC = () => {
             <XAxis dataKey="label" />
             <YAxis />
             <Tooltip 
-              formatter={(value: any, name: string) => [value, name.replace('_', ' ').toUpperCase()]}
+              formatter={(value: number, name: string) => [value, name.replace('_', ' ').toUpperCase()]}
               labelFormatter={(label) => `Date: ${label}`}
             />
             <Bar dataKey="Basic" fill="#3b82f6" name="Basic Treatment" />
@@ -689,7 +745,7 @@ const Charts: React.FC = () => {
             <XAxis dataKey="label" />
             <YAxis />
             <Tooltip 
-              formatter={(value: any, name: string) => [value, name.replace('_', ' ').toUpperCase()]}
+              formatter={(value: number, name: string) => [value, name.replace('_', ' ').toUpperCase()]}
               labelFormatter={(label) => `Date: ${label}`}
             />
             <Line type="linear" dataKey="Basic" stroke="#3b82f6" strokeWidth={3} name="Basic Treatment" />
@@ -709,7 +765,7 @@ const Charts: React.FC = () => {
             <XAxis dataKey="label" />
             <YAxis />
             <Tooltip 
-              formatter={(value: any) => [value, 'Total Treatments']}
+              formatter={(value: number) => [value, 'Total Treatments']}
               labelFormatter={(label) => `Time: ${label}`}
             />
             <Line 
@@ -740,11 +796,11 @@ const Charts: React.FC = () => {
               fill="#8884d8"
               dataKey="value"
             >
-              {pieData.map((entry, index) => (
+              {pieData.map((_, index) => (
                 <Cell key={`cell-${index}`} fill={["#3b82f6","#10b981","#f59e0b"][index % 3]} />
               ))}
             </Pie>
-            <Tooltip formatter={(value: any) => [value, 'Treatments']} />
+            <Tooltip formatter={(value: number) => [value, 'Treatments']} />
           </PieChart>
         </ResponsiveContainer>
       );
@@ -759,7 +815,7 @@ const Charts: React.FC = () => {
       return `Outlet: ${outlet?.name || 'Selected Outlet'}`;
     }
     if (viewMode === 'device' && selectedDevice) {
-      const machine = machines.find(m => m.device_id === selectedDevice);
+      const machine = machines.find(m => m.current_device_id === selectedDevice);
       return `Device: ${machine?.name || selectedDevice}`;
     }
     return 'All Data';
@@ -767,11 +823,8 @@ const Charts: React.FC = () => {
 
   return (
     <div className="charts-page">
-      <div className="page-header">
-        <div className="header-left">
-          <h1>Treatment Analytics</h1>
-          <p className="page-subtitle">Detailed analysis and visualization of treatment data</p>
-        </div>
+      <header className="header">
+        <h1>Treatment Analytics</h1>
         <div className="header-actions">
           <button 
             className="btn btn-secondary"
@@ -781,277 +834,198 @@ const Charts: React.FC = () => {
             Back to Dashboard
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Controls */}
-      <div className="controls-section">
-        <div className="control-group">
-          <label>Time Period:</label>
-          <div className="period-buttons">
-            {(['day', 'week', 'month', 'year'] as Period[]).map(p => (
+      <div className="page-content">
+
+      {/* Chart Section */}
+      <h2 className="section-title">
+        {chartType === 'line-total' ? 'Total Treatments Line Chart' : chartType.charAt(0).toUpperCase() + chartType.slice(1) + ' Chart'} - {getViewTitle()}
+      </h2>
+      
+      <div className="card chart-section-card">
+        {/* Chart Controls */}
+        <div className="controls-section">
+          <div className="control-group">
+            <label>Time Period:</label>
+            <div className="period-buttons">
+              {(['day', 'week', 'month', 'year'] as Period[]).map(p => (
+                <button
+                  key={p}
+                  className={`period-btn ${period === p ? 'active' : ''}`}
+                  onClick={() => {
+                    setPeriod(p);
+                    setCalendarDate(new Date(selectedDate));
+                    setShowDateModal(true);
+                  }}
+                >
+                  <Calendar size={16} />
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
+              ))}
               <button
-                key={p}
-                className={`period-btn ${period === p ? 'active' : ''}`}
-                onClick={() => {
-                  setPeriod(p);
-                  setCalendarDate(new Date(selectedDate));
-                  setShowDateModal(true);
-                }}
+                className={`period-btn ${period === 'custom' ? 'active' : ''}`}
+                onClick={() => setPeriod('custom')}
               >
                 <Calendar size={16} />
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
-            ))}
-            <button
-              className={`period-btn ${period === 'custom' ? 'active' : ''}`}
-              onClick={() => setPeriod('custom')}
-            >
-              <Calendar size={16} />
-              Custom
-            </button>
-          </div>
-          {period !== 'custom' && (
-            <div className="selected-date-display">
-              <span className="date-label">Selected {period}:</span>
-              <span className="date-value">
-                {period === 'day' && format(new Date(selectedDate), 'dd/MM/yyyy')}
-                {period === 'week' && `${format(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }), 'dd/MM')} - ${format(addDays(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }), 6), 'dd/MM/yyyy')}`}
-                {period === 'month' && format(new Date(selectedDate), 'MMMM yyyy')}
-                {period === 'year' && format(new Date(selectedDate), 'yyyy')}
-              </span>
-              <button
-                className="change-date-btn"
-                onClick={() => setShowDateModal(true)}
-              >
-                Change
+                Custom
               </button>
             </div>
-          )}
-          <div className="date-picker-container">
-            <div className="date-range-group">
+            {period !== 'custom' && (
+              <div className="selected-date-display">
+                <span className="date-label">Selected {period}:</span>
+                <span className="date-value">
+                  {period === 'day' && format(new Date(selectedDate), 'dd/MM/yyyy')}
+                  {period === 'week' && `${format(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }), 'dd/MM')} - ${format(addDays(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }), 6), 'dd/MM/yyyy')}`}
+                  {period === 'month' && format(new Date(selectedDate), 'MMMM yyyy')}
+                  {period === 'year' && format(new Date(selectedDate), 'yyyy')}
+                </span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setCalendarDate(new Date(selectedDate));
+                    setShowDateModal(true);
+                  }}
+                >
+                  Change
+                </button>
+              </div>
+            )}
+          </div>
+
+          {period === 'custom' && (
+            <div className="control-group">
               <label>Date Range:</label>
-              <div className="date-range-display">
-                <div className="date-range-item">
-                  <span className="date-label">From:</span>
-                  <button 
-                    className="date-display-btn"
-                    onClick={() => {
-                      setRangeSelecting('start');
-                      setRangeCalendarDate(rangeStartDate);
-                      setShowRangeModal(true);
-                    }}
-                  >
-                    {format(rangeStartDate, 'dd/MM/yyyy')}
-                  </button>
+              <div className="date-range-inputs">
+                <div className="date-input-group">
+                  <label>From:</label>
+                  <input
+                    type="date"
+                    value={format(new Date(startDate), 'yyyy-MM-dd')}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="date-input"
+                  />
                 </div>
-                <span className="date-separator">to</span>
-                <div className="date-range-item">
-                  <span className="date-label">To:</span>
-                  <button 
-                    className="date-display-btn"
-                    onClick={() => {
-                      setRangeSelecting('end');
-                      setRangeCalendarDate(rangeEndDate);
-                      setShowRangeModal(true);
-                    }}
-                  >
-                    {format(rangeEndDate, 'dd/MM/yyyy')}
-                  </button>
+                <div className="date-input-group">
+                  <label>To:</label>
+                  <input
+                    type="date"
+                    value={format(new Date(endDate), 'yyyy-MM-dd')}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="date-input"
+                  />
                 </div>
               </div>
-              <div className="date-presets">
+              <div className="quick-range-buttons">
                 <button
-                  className="preset-btn"
+                  className="quick-range-btn"
                   onClick={() => {
                     const today = new Date();
-                    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-                    setRangeStartDate(weekAgo);
-                    setRangeEndDate(today);
+                    const sevenDaysAgo = subDays(today, 7);
+                    setStartDate(sevenDaysAgo.toISOString().split('T')[0]);
+                    setEndDate(today.toISOString().split('T')[0]);
                   }}
                 >
                   Last 7 days
                 </button>
                 <button
-                  className="preset-btn"
+                  className="quick-range-btn"
                   onClick={() => {
                     const today = new Date();
-                    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-                    setRangeStartDate(monthAgo);
-                    setRangeEndDate(today);
+                    const thirtyDaysAgo = subDays(today, 30);
+                    setStartDate(thirtyDaysAgo.toISOString().split('T')[0]);
+                    setEndDate(today.toISOString().split('T')[0]);
                   }}
                 >
                   Last 30 days
                 </button>
                 <button
-                  className="preset-btn"
+                  className="quick-range-btn"
                   onClick={() => {
                     const today = new Date();
-                    const yearAgo = new Date(today.getTime() - 365 * 24 * 60 * 60 * 1000);
-                    setRangeStartDate(yearAgo);
-                    setRangeEndDate(today);
+                    const oneYearAgo = subYears(today, 1);
+                    setStartDate(oneYearAgo.toISOString().split('T')[0]);
+                    setEndDate(today.toISOString().split('T')[0]);
                   }}
                 >
                   Last year
                 </button>
               </div>
-              {period === 'custom' && (
-                <div className="applied-date-range">
-                  Applied: {format(new Date(startDate), 'dd/MM/yyyy')} - {format(new Date(endDate), 'dd/MM/yyyy')}
-                </div>
-              )}
             </div>
+          )}
+
+          <div className="control-group">
+            <label>Chart Type:</label>
+            <div className="chart-type-buttons">
+              {(['bar', 'line', 'line-total', 'pie'] as ChartType[]).map(type => (
+                <button
+                  key={type}
+                  className={`chart-type-btn ${chartType === type ? 'active' : ''}`}
+                  onClick={() => setChartType(type)}
+                >
+                  {type === 'bar' && <BarChart3 size={16} />}
+                  {type === 'line' && <TrendingUp size={16} />}
+                  {type === 'line-total' && <Activity size={16} />}
+                  {type === 'pie' && <Activity size={16} />}
+                  {type === 'bar' ? 'Bar Chart' : type === 'line' ? 'Line Chart' : type === 'line-total' ? 'Total Line' : 'Pie Chart'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label>View Mode:</label>
+            <div className="view-mode-buttons">
+              <button
+                className={`view-mode-btn ${viewMode === 'all' ? 'active' : ''}`}
+                onClick={() => setViewMode('all')}
+              >
+                All Data
+              </button>
+              <button
+                className={`view-mode-btn ${viewMode === 'outlet' ? 'active' : ''}`}
+                onClick={() => setViewMode('outlet')}
+              >
+                By Outlet
+              </button>
+              <button
+                className={`view-mode-btn ${viewMode === 'device' ? 'active' : ''}`}
+                onClick={() => setViewMode('device')}
+              >
+                By Device
+              </button>
+            </div>
+            {viewMode !== 'all' && (
+              <div className="filter-select">
+                <select
+                  value={viewMode === 'outlet' ? (selectedOutlet || '') : (selectedDevice || '')}
+                  onChange={(e) => {
+                    if (viewMode === 'outlet') {
+                      setSelectedOutlet(e.target.value ? Number(e.target.value) : null);
+                    } else {
+                      setSelectedDevice(e.target.value || null);
+                    }
+                  }}
+                  className="filter-dropdown"
+                >
+                  <option value="">Select {viewMode === 'outlet' ? 'Outlet' : 'Device'}</option>
+                  {viewMode === 'outlet' ? outlets.map(outlet => (
+                    <option key={outlet.id} value={outlet.id}>
+                      {outlet.name}
+                    </option>
+                  )) : devices.map(device => (
+                    <option key={device.device_id} value={device.device_id}>
+                      {device.device_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="control-group">
-          <label>Chart Type:</label>
-          <div className="chart-type-buttons">
-            <button
-              className={`chart-type-btn ${chartType === 'bar' ? 'active' : ''}`}
-              onClick={() => setChartType('bar')}
-            >
-              <BarChart3 size={16} />
-              Bar Chart
-            </button>
-            <button
-              className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`}
-              onClick={() => setChartType('line')}
-            >
-              <TrendingUp size={16} />
-              Line Chart
-            </button>
-            <button
-              className={`chart-type-btn ${chartType === 'line-total' ? 'active' : ''}`}
-              onClick={() => setChartType('line-total')}
-            >
-              <Activity size={16} />
-              Total Line
-            </button>
-            <button
-              className={`chart-type-btn ${chartType === 'pie' ? 'active' : ''}`}
-              onClick={() => setChartType('pie')}
-            >
-              <PieChartIcon size={16} />
-              Pie Chart
-            </button>
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>View Mode:</label>
-          <div className="view-mode-buttons">
-            <button
-              className={`view-mode-btn ${viewMode === 'all' ? 'active' : ''}`}
-              onClick={() => {
-                setViewMode('all');
-                setSelectedOutlet(null);
-                setSelectedDevice(null);
-              }}
-            >
-              All Data
-            </button>
-            <button
-              className={`view-mode-btn ${viewMode === 'outlet' ? 'active' : ''}`}
-              onClick={() => setViewMode('outlet')}
-            >
-              By Outlet
-            </button>
-            <button
-              className={`view-mode-btn ${viewMode === 'device' ? 'active' : ''}`}
-              onClick={() => setViewMode('device')}
-            >
-              By Device
-            </button>
-          </div>
-        </div>
-      </div>
-
-
-      {/* Filters */}
-      {viewMode === 'outlet' && (
-        <div className="filter-section">
-          <label>Select Outlet:</label>
-          <select 
-            value={selectedOutlet || ''} 
-            onChange={(e) => setSelectedOutlet(e.target.value ? Number(e.target.value) : null)}
-            className="outlet-select"
-          >
-            <option value="">All Outlets</option>
-            {outlets.map(outlet => (
-              <option key={outlet.id} value={outlet.id}>
-                {outlet.name} ({outlet.location})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {viewMode === 'device' && (
-        <div className="filter-section">
-          <label>Select Device:</label>
-          <select 
-            value={selectedDevice || ''} 
-            onChange={(e) => setSelectedDevice(e.target.value || null)}
-            className="device-select"
-          >
-            <option value="">All Devices</option>
-            {machines.map(machine => (
-              <option key={machine.device_id} value={machine.device_id}>
-                {machine.name || machine.device_id} ({machine.outlet_name})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Summary Cards */}
-      {analytics && (
-        <div className="summary-cards">
-          <div className="summary-card">
-            <div className="summary-icon">
-              <Activity className="text-blue-500" />
-            </div>
-            <div className="summary-content">
-              <h3>Total Treatments</h3>
-              <p className="summary-value">{analytics.totals.total}</p>
-            </div>
-          </div>
-          <div className="summary-card">
-            <div className="summary-icon">
-              <Activity className="text-blue-600" />
-            </div>
-            <div className="summary-content">
-              <h3>Basic Treatments</h3>
-              <p className="summary-value">{analytics.totals.basic}</p>
-            </div>
-          </div>
-          <div className="summary-card">
-            <div className="summary-icon">
-              <Activity className="text-green-600" />
-            </div>
-            <div className="summary-content">
-              <h3>Standard Treatments</h3>
-              <p className="summary-value">{analytics.totals.standard}</p>
-            </div>
-          </div>
-          <div className="summary-card">
-            <div className="summary-icon">
-              <Activity className="text-yellow-600" />
-            </div>
-            <div className="summary-content">
-              <h3>Premium Treatments</h3>
-              <p className="summary-value">{analytics.totals.premium}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main Chart */}
-      <div className="chart-container">
-        <div className="chart-header">
-          <h2>
-            {chartType === 'line-total' ? 'Total Treatments Line Chart' : chartType.charAt(0).toUpperCase() + chartType.slice(1) + ' Chart'} - {getViewTitle()}
-          </h2>
+        {/* Chart Info */}
+        <div className="chart-info">
           <p className="chart-subtitle">
             {period === 'custom' 
               ? `Custom Range: ${format(new Date(startDate), 'dd/MM/yyyy')} - ${format(new Date(endDate), 'dd/MM/yyyy')} • ${chartType === 'line-total' ? lineTotalData.length : data.length} data points`
@@ -1062,6 +1036,7 @@ const Charts: React.FC = () => {
           </p>
         </div>
         
+        {/* Chart */}
         <div className="chart-wrapper">
           {loading ? (
             <div className="loading-state">
@@ -1082,41 +1057,344 @@ const Charts: React.FC = () => {
         </div>
       </div>
 
+      {/* Analytics Overview */}
+      <h2 className="section-title">Analytics Overview</h2>
+      
+      {analytics && (
+        <div className="card analytics-overview-card">
+          {/* Treatment Statistics */}
+          <div className="stats-section">
+            <h4>Treatment Statistics</h4>
+            <div className="stats-grid">
+              <div className="stat-item">
+                <div className="stat-icon basic">
+                  <Activity size={20} />
+                </div>
+                <div className="stat-content">
+                  <span className="stat-label">Basic</span>
+                  <span className="stat-value">{analytics.totals.basic}</span>
+                  <span className="stat-percentage">
+                    {analytics.totals.total > 0 ? Math.round((analytics.totals.basic / analytics.totals.total) * 100) : 0}%
+                  </span>
+                </div>
+              </div>
+              <div className="stat-item">
+                <div className="stat-icon standard">
+                  <Activity size={20} />
+                </div>
+                <div className="stat-content">
+                  <span className="stat-label">Standard</span>
+                  <span className="stat-value">{analytics.totals.standard}</span>
+                  <span className="stat-percentage">
+                    {analytics.totals.total > 0 ? Math.round((analytics.totals.standard / analytics.totals.total) * 100) : 0}%
+                  </span>
+                </div>
+              </div>
+              <div className="stat-item">
+                <div className="stat-icon premium">
+                  <Activity size={20} />
+                </div>
+                <div className="stat-content">
+                  <span className="stat-label">Premium</span>
+                  <span className="stat-value">{analytics.totals.premium}</span>
+                  <span className="stat-percentage">
+                    {analytics.totals.total > 0 ? Math.round((analytics.totals.premium / analytics.totals.total) * 100) : 0}%
+                  </span>
+                </div>
+              </div>
+              <div className="stat-item total">
+                <div className="stat-icon total">
+                  <Activity size={20} />
+                </div>
+                <div className="stat-content">
+                  <span className="stat-label">Total</span>
+                  <span className="stat-value">{analytics.totals.total}</span>
+                  <span className="stat-percentage">100%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Performance Analysis */}
+          <div className="performance-analysis">
+            <h4>Performance Analysis</h4>
+            <div className="analysis-grid">
+              <div className="analysis-card">
+                <h5>Daily Performance</h5>
+                <div className="analysis-metrics">
+                  <div className="analysis-metric">
+                    <span className="metric-label">Average per Day</span>
+                    <span className="metric-value">
+                      {analytics.daily_stats.length > 0 
+                        ? Math.round(analytics.totals.total / analytics.daily_stats.length)
+                        : 0
+                      }
+                    </span>
+                  </div>
+                  <div className="analysis-metric">
+                    <span className="metric-label">Peak Day</span>
+                    <span className="metric-value">
+                      {analytics.daily_stats.length > 0
+                        ? Math.max(...analytics.daily_stats.map(day => day.total_events))
+                        : 0
+                      }
+                    </span>
+                  </div>
+                  <div className="analysis-metric">
+                    <span className="metric-label">Active Days</span>
+                    <span className="metric-value">
+                      {analytics.daily_stats.filter(day => day.total_events > 0).length}
+                    </span>
+                  </div>
+                  <div className="analysis-metric">
+                    <span className="metric-label">Efficiency Rate</span>
+                    <span className="metric-value">
+                      {analytics.daily_stats.length > 0
+                        ? Math.round((analytics.daily_stats.filter(day => day.total_events > 0).length / analytics.daily_stats.length) * 100)
+                        : 0
+                      }%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="analysis-card">
+                <h5>Treatment Distribution</h5>
+                <div className="distribution-chart">
+                  <div className="distribution-item">
+                    <div className="distribution-bar">
+                      <div 
+                        className="distribution-fill basic" 
+                        style={{width: `${analytics.totals.total > 0 ? (analytics.totals.basic / analytics.totals.total) * 100 : 0}%`}}
+                      ></div>
+                    </div>
+                    <div className="distribution-label">
+                      <span>Basic</span>
+                      <span>{analytics.totals.basic} ({analytics.totals.total > 0 ? Math.round((analytics.totals.basic / analytics.totals.total) * 100) : 0}%)</span>
+                    </div>
+                  </div>
+                  <div className="distribution-item">
+                    <div className="distribution-bar">
+                      <div 
+                        className="distribution-fill standard" 
+                        style={{width: `${analytics.totals.total > 0 ? (analytics.totals.standard / analytics.totals.total) * 100 : 0}%`}}
+                      ></div>
+                    </div>
+                    <div className="distribution-label">
+                      <span>Standard</span>
+                      <span>{analytics.totals.standard} ({analytics.totals.total > 0 ? Math.round((analytics.totals.standard / analytics.totals.total) * 100) : 0}%)</span>
+                    </div>
+                  </div>
+                  <div className="distribution-item">
+                    <div className="distribution-bar">
+                      <div 
+                        className="distribution-fill premium" 
+                        style={{width: `${analytics.totals.total > 0 ? (analytics.totals.premium / analytics.totals.total) * 100 : 0}%`}}
+                      ></div>
+                    </div>
+                    <div className="distribution-label">
+                      <span>Premium</span>
+                      <span>{analytics.totals.premium} ({analytics.totals.total > 0 ? Math.round((analytics.totals.premium / analytics.totals.total) * 100) : 0}%)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Outlet Performance Analysis */}
+          {outlets.length > 0 && (
+            <div className="outlet-performance">
+              <h4>Outlet Performance Analysis</h4>
+              <div className="outlet-grid">
+                {outlets.map(outlet => {
+                  // Get machines for this outlet first, then get their devices
+                  const outletMachines = machines.filter(machine => machine.outlet === outlet.id);
+                  const outletDevices = outletMachines.map(machine => {
+                    // Get the current active device for this machine
+                    const currentDevice = machine.current_device;
+                    if (currentDevice) {
+                      return devices.find(device => device.device_id === currentDevice.device_id);
+                    }
+                    return null;
+                  }).filter(Boolean);
+                  
+                  
+                  
+                  
+                  // Calculate outlet performance metrics from device data
+                  let outletTotal = 0;
+                  let outletBasic = 0;
+                  let outletStandard = 0;
+                  let outletPremium = 0;
+                  
+                  // Count events for this outlet (not sum count values)
+                  outletDevices.forEach(device => {
+                    if (!device) return;
+                    const deviceEvents = analytics.recent_events?.filter(event => 
+                      event.device_id === device.device_id || event.device === device.device_id
+                    ) || [];
+                    
+                    // Count events by type, not sum count values
+                    const deviceTotal = deviceEvents.length;
+                    const deviceBasic = deviceEvents.filter(event => event.event_type === 'BASIC').length;
+                    const deviceStandard = deviceEvents.filter(event => event.event_type === 'STANDARD').length;
+                    const devicePremium = deviceEvents.filter(event => event.event_type === 'PREMIUM').length;
+                    
+                    outletTotal += deviceTotal;
+                    outletBasic += deviceBasic;
+                    outletStandard += deviceStandard;
+                    outletPremium += devicePremium;
+                  });
+                  
+                  // Calculate performance score (0-100)
+                  const avgDaily = analytics.daily_stats.length > 0 ? analytics.totals.total / analytics.daily_stats.length : 0;
+                  const outletDaily = analytics.daily_stats.length > 0 ? outletTotal / analytics.daily_stats.length : 0;
+                  const performanceScore = avgDaily > 0 ? Math.min(100, Math.round((outletDaily / avgDaily) * 100)) : 0;
+                  
+                  return (
+                    <div key={outlet.id} className="outlet-card">
+                      <div className="outlet-header">
+                        <h5>{outlet.name}</h5>
+                        <div className={`performance-badge ${performanceScore >= 80 ? 'excellent' : performanceScore >= 60 ? 'good' : performanceScore >= 40 ? 'average' : 'poor'}`}>
+                          {performanceScore}%
+                        </div>
+                      </div>
+                      <div className="outlet-metrics">
+                        <div className="outlet-metric">
+                          <span className="metric-label">Total Treatments</span>
+                          <span className="metric-value">{outletTotal}</span>
+                        </div>
+                        <div className="outlet-metric">
+                          <span className="metric-label">Daily Average</span>
+                          <span className="metric-value">{Math.round(outletDaily)}</span>
+                        </div>
+                        <div className="outlet-metric">
+                          <span className="metric-label">Machines</span>
+                          <span className="metric-value">{outletMachines.length}</span>
+                        </div>
+                        <div className="outlet-metric">
+                          <span className="metric-label">Location</span>
+                          <span className="metric-value">{outlet.location}</span>
+                        </div>
+                      </div>
+                      <div className="outlet-breakdown">
+                        <div className="breakdown-item">
+                          <span className="breakdown-label">Basic</span>
+                          <span className="breakdown-value">{outletBasic}</span>
+                        </div>
+                        <div className="breakdown-item">
+                          <span className="breakdown-label">Standard</span>
+                          <span className="breakdown-value">{outletStandard}</span>
+                        </div>
+                        <div className="breakdown-item">
+                          <span className="breakdown-label">Premium</span>
+                          <span className="breakdown-value">{outletPremium}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Device Performance Analysis */}
+          {devices.length > 0 && (
+            <div className="device-performance">
+              <h4>Device Performance Analysis</h4>
+              <div className="device-grid">
+                {devices.map(device => {
+                  const isOnline = device.wifi_connected && (new Date().getTime() - new Date(device.last_seen).getTime()) < 5 * 60 * 1000;
+                  const deviceEvents = analytics.recent_events?.filter(event => 
+                    event.device_id === device.device_id || event.device === device.device_id
+                  ) || [];
+                  const deviceTotal = deviceEvents.length;
+                  
+                  return (
+                    <div key={device.device_id} className="device-card">
+                      <div className="device-header">
+                        <h5>{device.device_id}</h5>
+                        <div className={`status-badge ${isOnline ? 'online' : 'offline'}`}>
+                          {isOnline ? 'Online' : 'Offline'}
+                        </div>
+                      </div>
+                      <div className="device-metrics">
+                        <div className="device-metric">
+                          <span className="metric-label">Total Events</span>
+                          <span className="metric-value">{deviceTotal}</span>
+                        </div>
+                        <div className="device-metric">
+                          <span className="metric-label">Last Seen</span>
+                          <span className="metric-value">{format(parseISO(device.last_seen), 'MMM dd, HH:mm')}</span>
+                        </div>
+                        <div className="device-metric">
+                          <span className="metric-label">Uptime</span>
+                          <span className="metric-value">
+                            {isOnline ? '100%' : '0%'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Recent Events Table */}
       {analytics?.recent_events && analytics.recent_events.length > 0 && (
-        <div className="recent-events-section">
-          <h3>Recent Treatment Events</h3>
-          <div className="events-table-container">
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Event Type</th>
-                  <th>Basic</th>
-                  <th>Standard</th>
-                  <th>Premium</th>
-                  <th>Device</th>
-                </tr>
-              </thead>
-              <tbody>
-                {analytics.recent_events.slice(0, 20).map((event, idx) => (
-                  <tr key={idx}>
-                    <td>{format(parseISO(event.occurred_at), 'MMM dd, HH:mm:ss')}</td>
-                    <td>
-                      <span className={`event-type ${event.event_type.toLowerCase()}`}>
-                        {event.event_type}
-                      </span>
-                    </td>
-                    <td>{event.count_basic}</td>
-                    <td>{event.count_standard}</td>
-                    <td>{event.count_premium}</td>
-                    <td>N/A</td>
+        <>
+          <h2 className="section-title">Recent Treatment Events</h2>
+          <div className="card recent-events-card">
+            <div className="events-table-container">
+              <table className="events-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Event Type</th>
+                    <th>Basic</th>
+                    <th>Standard</th>
+                    <th>Premium</th>
+                    <th>Device</th>
+                    <th>Machine</th>
+                    <th>Outlet</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {analytics.recent_events.slice(0, 20).map((event, idx) => {
+                    // Find the machine for this device
+                    const machine = machines.find(m => 
+                      m.devices?.some((d: MachineDevice) => d.device_id === event.device_id) ||
+                      m.current_device_id === event.device_id
+                    );
+                    const machineName = machine?.name || 'Unknown';
+                    const outletName = machine?.outlet_name || 'Unknown';
+                    
+                    return (
+                      <tr key={idx}>
+                        <td>{format(parseISO(event.occurred_at), 'MMM dd, HH:mm:ss')}</td>
+                        <td>
+                          <span className={`event-type ${event.event_type.toLowerCase()}`}>
+                            {event.event_type}
+                          </span>
+                        </td>
+                        <td>{event.count_basic || 0}</td>
+                        <td>{event.count_standard || 0}</td>
+                        <td>{event.count_premium || 0}</td>
+                        <td>{event.device_id || event.device || 'Unknown'}</td>
+                        <td>{machineName}</td>
+                        <td>{outletName}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Date Selection Modal */}
@@ -1546,8 +1824,8 @@ const Charts: React.FC = () => {
                 className="btn btn-primary"
                 onClick={() => {
                   setShowRangeModal(false);
-                  setTempStartDate(format(rangeStartDate, 'yyyy-MM-dd'));
-                  setTempEndDate(format(rangeEndDate, 'yyyy-MM-dd'));
+                  setStartDate(format(rangeStartDate, 'yyyy-MM-dd'));
+                  setEndDate(format(rangeEndDate, 'yyyy-MM-dd'));
                 }}
               >
                 Apply
@@ -1555,7 +1833,9 @@ const Charts: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+        )}
+      </div>
+      <Footer />
     </div>
   );
 };

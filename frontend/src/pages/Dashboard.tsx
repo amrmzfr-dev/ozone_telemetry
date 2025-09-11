@@ -3,9 +3,10 @@ import axios from 'axios'
 import { format, parseISO, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, differenceInCalendarDays, startOfYear, addMonths } from 'date-fns'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { Activity, Clock, Wifi, Database, Download, RefreshCw, AlertCircle, Building2, BarChart3 } from 'lucide-react'
+import Footer from '../components/Footer'
 import '../App.css'
 
-const api = axios.create({ baseURL: 'http://10.172.66.5:8000/api' })
+const api = axios.create({ baseURL: 'http://10.115.106.5:8000/api' })
 
 interface DeviceStatus {
   device_id: string
@@ -25,6 +26,24 @@ interface AnalyticsData {
   totals: { total: number; basic: number; standard: number; premium: number }
   daily_stats: Array<{ date: string; basic_count: number; standard_count: number; premium_count: number; total_events: number }>
   recent_events: Array<{ event_type: string; occurred_at: string; device_timestamp: string; count_basic: number; count_standard: number; count_premium: number }>
+}
+
+interface RecentEvent {
+  device_id: string
+  event_type: string
+  occurred_at: string
+  device_timestamp: string
+  count_basic: number
+  count_standard: number
+  count_premium: number
+}
+
+interface DailyStat {
+  date: string
+  basic_count: number
+  standard_count: number
+  premium_count: number
+  total_events: number
 }
 
 interface Outlet {
@@ -50,6 +69,8 @@ export default function Dashboard() {
   const [machines, setMachines] = useState<Machine[]>([])
   const [outlets, setOutlets] = useState<Outlet[]>([])
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
+  const [allRecentEvents, setAllRecentEvents] = useState<RecentEvent[]>([])
+  const [dateSortOrder, setDateSortOrder] = useState<'latest' | 'oldest'>('latest')
   const [selectedDevice, setSelectedDevice] = useState<string>('')
   const [selectedOutlet, setSelectedOutlet] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<'all' | 'outlet' | 'device'>('all')
@@ -129,13 +150,37 @@ export default function Dashboard() {
     if (!deviceId) return
     setLoading(true)
     try {
-      const days = period === 'day' ? 1 : period === 'week' ? 7 : period === 'month' ? 30 : 365
+      const days = period === 'day' ? 1 : period === 'week' ? 30 : period === 'month' ? 30 : 365
       const res = await api.get('/events/analytics/', { params: { device_id: deviceId, days } })
       setAnalytics(res.data)
     } catch {
       setError('Failed to fetch analytics')
     } finally { setLoading(false) }
   }, [period])
+
+  const fetchAllRecentEvents = useCallback(async () => {
+    try {
+      const days = period === 'day' ? 1 : period === 'week' ? 30 : period === 'month' ? 30 : 365
+      const res = await api.get('/events/', { 
+        params: { 
+          days,
+          limit: 50,
+          exclude_status: true
+        } 
+      })
+      setAllRecentEvents(res.data.results || res.data)
+    } catch {
+      console.error('Failed to fetch recent events')
+    }
+  }, [period])
+
+  const getSortedEvents = useCallback((events: RecentEvent[]) => {
+    return [...events].sort((a, b) => {
+      const dateA = new Date(a.occurred_at).getTime()
+      const dateB = new Date(b.occurred_at).getTime()
+      return dateSortOrder === 'latest' ? dateB - dateA : dateA - dateB
+    })
+  }, [dateSortOrder])
 
   const fetchAggregatedAnalytics = useCallback(async () => {
     if (viewMode === 'device' && selectedDevice) {
@@ -145,7 +190,7 @@ export default function Dashboard() {
     
     setLoading(true)
     try {
-      const days = period === 'day' ? 1 : period === 'week' ? 7 : period === 'month' ? 30 : 365
+      const days = period === 'day' ? 1 : period === 'week' ? 30 : period === 'month' ? 30 : 365
       const filteredDevices = getFilteredDevices()
       
       if (filteredDevices.length === 0) {
@@ -176,8 +221,8 @@ export default function Dashboard() {
           standard: 0,
           premium: 0
         },
-        daily_stats: [] as any[],
-        recent_events: [] as any[]
+        daily_stats: [] as DailyStat[],
+        recent_events: [] as RecentEvent[]
       }
 
       // Aggregate totals
@@ -194,7 +239,7 @@ export default function Dashboard() {
       const dailyStatsMap = new Map()
       responses.forEach(response => {
         if (response.data?.daily_stats) {
-          response.data.daily_stats.forEach((stat: any) => {
+          response.data.daily_stats.forEach((stat: DailyStat) => {
             const existing = dailyStatsMap.get(stat.date) || {
               date: stat.date,
               basic_count: 0,
@@ -215,7 +260,7 @@ export default function Dashboard() {
       )
 
       // Aggregate recent events (limit to 50 most recent)
-      const allRecentEvents: any[] = []
+      const allRecentEvents: RecentEvent[] = []
       responses.forEach(response => {
         if (response.data?.recent_events) {
           allRecentEvents.push(...response.data.recent_events)
@@ -231,7 +276,7 @@ export default function Dashboard() {
     } finally { 
       setLoading(false) 
     }
-  }, [period, viewMode, selectedDevice, selectedOutlet, machines, devices, fetchAnalytics])
+  }, [period, viewMode, selectedDevice, selectedOutlet, fetchAnalytics, getFilteredDevices])
 
   const exportData = async (deviceId: string) => {
     try {
@@ -268,6 +313,12 @@ export default function Dashboard() {
   useEffect(() => { 
     fetchAggregatedAnalytics() 
   }, [fetchAggregatedAnalytics])
+
+  useEffect(() => {
+    if (viewMode === 'all') {
+      fetchAllRecentEvents()
+    }
+  }, [viewMode, fetchAllRecentEvents])
 
   const buildChartData = (): Array<{ label: string; Total: number; Basic: number; Standard: number; Premium: number }> => {
     if (!analytics) return []
@@ -674,33 +725,71 @@ export default function Dashboard() {
                 <span className="chart-subtitle"> - {outlets.find(o => o.id === selectedOutlet)?.name || 'Selected Outlet'}</span>
               )}
             </h3>
-            <div className="events-table">
-              <table>
-                <thead><tr><th>Time</th><th>Event Type</th><th>Basic</th><th>Standard</th><th>Premium</th></tr></thead>
+            <div className="events-table-container">
+              <table className="events-table">
+                <thead>
+                  <tr>
+                    <th 
+                      className="sortable-header"
+                      onClick={() => setDateSortOrder(dateSortOrder === 'latest' ? 'oldest' : 'latest')}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      Time {dateSortOrder === 'latest' ? '↓' : '↑'}
+                    </th>
+                    <th>Device ID</th>
+                    {viewMode === 'all' && <th>Outlet</th>}
+                    {viewMode === 'all' && <th>Machine</th>}
+                    <th>Event Type</th>
+                    <th>Basic</th>
+                    <th>Standard</th>
+                    <th>Premium</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {analytics && analytics.recent_events && analytics.recent_events.length > 0 ? (
-                    analytics.recent_events.slice(0, 10).map((event, idx) => (
-                      <tr key={idx}>
-                        <td>{format(parseISO(event.occurred_at), 'MMM dd, HH:mm:ss')}</td>
-                        <td><span className={`event-type ${event.event_type.toLowerCase()}`}>{event.event_type}</span></td>
-                        <td>{event.count_basic}</td><td>{event.count_standard}</td><td>{event.count_premium}</td>
+                  {(() => {
+                    // Use different data sources based on view mode
+                    let events: RecentEvent[] = []
+                    if (viewMode === 'all') {
+                      events = getSortedEvents(allRecentEvents)
+                    } else if (analytics && analytics.recent_events) {
+                      events = getSortedEvents(analytics.recent_events as RecentEvent[])
+                    }
+                    
+                    return events.length > 0 ? (
+                      events.map((event, idx) => {
+                        // Find the machine and outlet info for this device
+                        const machine = machines.find(m => m.device_id === event.device_id)
+                        const outlet = machine ? outlets.find(o => o.id === machine.outlet) : null
+                        
+                        return (
+                          <tr key={idx}>
+                            <td>{format(parseISO(event.occurred_at), 'MMM dd, HH:mm:ss')}</td>
+                            <td>{event.device_id}</td>
+                            {viewMode === 'all' && <td>{outlet?.name || 'Unknown'}</td>}
+                            {viewMode === 'all' && <td>{machine?.name || 'Unknown'}</td>}
+                            <td><span className={`event-type ${event.event_type.toLowerCase()}`}>{event.event_type}</span></td>
+                            <td>{event.count_basic || 0}</td>
+                            <td>{event.count_standard || 0}</td>
+                            <td>{event.count_premium || 0}</td>
+                          </tr>
+                        )
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={viewMode === 'all' ? 7 : 5} className="empty-table-cell">
+                          <div className="empty-table-content">
+                            <Activity size={32} />
+                            <span>
+                              {viewMode === 'outlet' && selectedOutlet 
+                                ? `No events found for ${outlets.find(o => o.id === selectedOutlet)?.name || 'selected outlet'}`
+                                : 'No recent events found'
+                              }
+                            </span>
+                          </div>
+                        </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="empty-table-cell">
-                        <div className="empty-table-content">
-                          <Activity size={32} />
-                          <span>
-                            {viewMode === 'outlet' && selectedOutlet 
-                              ? `No events found for ${outlets.find(o => o.id === selectedOutlet)?.name || 'selected outlet'}`
-                              : 'No recent events found'
-                            }
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                    )
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -716,8 +805,8 @@ export default function Dashboard() {
                     : 'Device Status Overview'
                 }
               </h3>
-              <div className="events-table">
-                <table>
+              <div className="events-table-container">
+                <table className="events-table">
                   <thead>
                     <tr>
                       <th>Device ID</th>
@@ -771,6 +860,7 @@ export default function Dashboard() {
           {loading && (<div className="loading"><RefreshCw className="spinner" /> Loading analytics...</div>)}
         </main>
       </div>
+      <Footer />
     </div>
   )
 }

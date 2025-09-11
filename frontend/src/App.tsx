@@ -62,42 +62,48 @@ function App() {
       <Layout>
         <Sidebar>
           <div className="sidebar-header">
-            <h2>Ozone Telemetry</h2>
+            <div className="sidebar-logo">
+              <div className="logo-icon">O</div>
+            </div>
           </div>
           <nav className="sidebar-nav">
             <button 
               className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`}
               onClick={() => setCurrentPage('dashboard')}
+              title="Dashboard"
             >
               <Home size={20} />
-              Dashboard
+              <span>Dashboard</span>
             </button>
             <button 
               className={`nav-item ${currentPage === 'outlets' ? 'active' : ''}`}
               onClick={() => setCurrentPage('outlets')}
+              title="Outlets"
             >
               <Building2 size={20} />
-              Outlets
+              <span>Outlets</span>
             </button>
             <button
               className={`nav-item ${currentPage === 'machines' ? 'active' : ''}`}
               onClick={() => setCurrentPage('machines')}
+              title="Machines"
             >
               <Cpu size={20} />
-              Machines
+              <span>Machines</span>
             </button>
             <button
               className={`nav-item ${currentPage === 'charts' ? 'active' : ''}`}
               onClick={() => setCurrentPage('charts')}
+              title="Charts"
             >
               <BarChart3 size={20} />
-              Charts
+              <span>Charts</span>
             </button>
           </nav>
           <div className="sidebar-footer">
-            <button className="nav-item logout" onClick={handleLogout}>
+            <button className="nav-item logout" onClick={handleLogout} title="Logout">
               <LogOut size={20} />
-              Logout
+              <span>Logout</span>
             </button>
           </div>
         </Sidebar>

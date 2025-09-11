@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Plus, Edit, Trash2, Building2, MapPin, Phone, User } from 'lucide-react';
+import Footer from '../components/Footer';
 import '../App.css';
 
-const api = axios.create({ baseURL: 'http://10.172.66.5:8000/api' });
+const api = axios.create({ baseURL: 'http://10.115.106.5:8000/api' });
 
 interface Outlet {
   id: number;
@@ -38,7 +39,7 @@ export default function Outlets() {
     try {
       const response = await api.get('/outlets/');
       setOutlets(response.data);
-    } catch (err) {
+    } catch {
       setError('Failed to fetch outlets');
     } finally {
       setLoading(false);
@@ -64,7 +65,7 @@ export default function Outlets() {
         is_active: true
       });
       fetchOutlets();
-    } catch (err) {
+    } catch {
       setError('Failed to save outlet');
     }
   };
@@ -87,7 +88,7 @@ export default function Outlets() {
     try {
       await api.delete(`/outlets/${id}/`);
       fetchOutlets();
-    } catch (err) {
+    } catch {
       setError('Failed to delete outlet');
     }
   };
@@ -122,13 +123,14 @@ export default function Outlets() {
         </button>
       </header>
 
-      {error && (
-        <div className="alert alert-error">
-          {error}
-        </div>
-      )}
+      <div className="page-content">
+        {error && (
+          <div className="alert alert-error">
+            {error}
+          </div>
+        )}
 
-      {showForm && (
+        {showForm && (
         <div className="modal-overlay">
           <div className="modal">
             <div className="modal-header">
@@ -271,6 +273,8 @@ export default function Outlets() {
           ))
         )}
       </div>
+      </div>
+      <Footer />
     </div>
   );
 }

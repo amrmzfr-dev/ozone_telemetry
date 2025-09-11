@@ -2,10 +2,10 @@ from rest_framework import viewsets, mixins, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from django.utils import timezone
-from django.db.models import Sum, Count, Min, Max
+from django.db.models import Sum, Count, Q, Min, Max
 from django.db.models.functions import TruncDate
 from datetime import datetime, timedelta
-from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics, Outlet, Machine
+from .models import TelemetryRecord, TelemetryEvent, DeviceStatus, UsageStatistics, Outlet, Machine, MachineDevice
 from .serializers import TelemetryRecordSerializer, TelemetryEventSerializer, DeviceStatusSerializer, UsageStatisticsSerializer, OutletSerializer, MachineSerializer
 from django.db import transaction
 
@@ -231,9 +231,22 @@ class TelemetryEventViewSet(mixins.ListModelMixin,
     def get_queryset(self):
         qs = super().get_queryset()
         device_id = self.request.query_params.get("device_id")
+        days = self.request.query_params.get("days")
+        exclude_status = self.request.query_params.get("exclude_status")
+        
         if device_id:
             qs = qs.filter(device_id=device_id)
-        return qs
+            
+        if days:
+            from datetime import timedelta
+            from django.utils import timezone
+            days_int = int(days)
+            qs = qs.filter(occurred_at__gte=timezone.now() - timedelta(days=days_int))
+            
+        if exclude_status:
+            qs = qs.exclude(event_type='status')
+            
+        return qs.order_by('-occurred_at')
 
     @action(detail=False, methods=["get"], url_path="analytics")
     def analytics(self, request):
@@ -244,8 +257,13 @@ class TelemetryEventViewSet(mixins.ListModelMixin,
         if not device_id:
             return Response({"detail": "device_id required"}, status=status.HTTP_400_BAD_REQUEST)
         
-        end_date = timezone.now().date()
-        start_date = end_date - timedelta(days=days)
+        # Use consistent time range for both queries
+        end_datetime = timezone.now()
+        start_datetime = end_datetime - timedelta(days=days)
+        
+        # Convert to dates for UsageStatistics (daily aggregated data)
+        end_date = end_datetime.date()
+        start_date = start_datetime.date()
         
         # Get daily statistics
         daily_stats = UsageStatistics.objects.filter(
@@ -254,13 +272,14 @@ class TelemetryEventViewSet(mixins.ListModelMixin,
             date__lte=end_date
         ).order_by('date')
         
-        # Get recent events (exclude heartbeats/status)
+        # Get recent events (exclude heartbeats/status) - use same time range
         recent_events = TelemetryEvent.objects.filter(
             device_id=device_id,
-            occurred_at__gte=timezone.now() - timedelta(days=days)
+            occurred_at__gte=start_datetime,
+            occurred_at__lte=end_datetime
         ).exclude(event_type='status').order_by('-occurred_at')[:50]
         
-        # Calculate totals
+        # Calculate totals from UsageStatistics (daily aggregated data)
         total_events = daily_stats.aggregate(
             total=Sum('total_events'),
             basic=Sum('basic_count'),
@@ -268,14 +287,27 @@ class TelemetryEventViewSet(mixins.ListModelMixin,
             premium=Sum('premium_count')
         )
         
+        # Also calculate totals from individual events for comparison
+        event_totals = recent_events.aggregate(
+            total_events=Count('id'),
+            basic_events=Count('id', filter=Q(event_type='BASIC')),
+            standard_events=Count('id', filter=Q(event_type='STANDARD')),
+            premium_events=Count('id', filter=Q(event_type='PREMIUM'))
+        )
+        
         data = {
             "device_id": device_id,
             "period": {
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
+                "start_date": start_datetime.isoformat(),
+                "end_date": end_datetime.isoformat(),
                 "days": days
             },
-            "totals": total_events,
+            "totals": {
+                "total": event_totals['total_events'] or 0,
+                "basic": event_totals['basic_events'] or 0,
+                "standard": event_totals['standard_events'] or 0,
+                "premium": event_totals['premium_events'] or 0
+            },
             "daily_stats": UsageStatisticsSerializer(daily_stats, many=True).data,
             "recent_events": TelemetryEventSerializer(recent_events, many=True).data
         }
@@ -410,13 +442,14 @@ class MachineViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             qs = qs.filter(is_active=is_active.lower() == 'true')
         if device_id:
-            qs = qs.filter(device_id=device_id)
+            # Filter by current device_id
+            qs = qs.filter(devices__device_id=device_id, devices__is_active=True)
         return qs
     
     @action(detail=False, methods=["get"], url_path="unregistered")
     def unregistered_devices(self, request):
         """Get devices that have telemetry data but are not registered as machines"""
-        registered_device_ids = set(Machine.objects.values_list('device_id', flat=True))
+        registered_device_ids = set(MachineDevice.objects.values_list('device_id', flat=True))
         unregistered_devices = DeviceStatus.objects.exclude(device_id__in=registered_device_ids)
         return Response(DeviceStatusSerializer(unregistered_devices, many=True).data)
     
@@ -435,13 +468,20 @@ class MachineViewSet(viewsets.ModelViewSet):
         except Outlet.DoesNotExist:
             return Response({"detail": "Outlet not found"}, status=status.HTTP_404_NOT_FOUND)
         
-        if Machine.objects.filter(device_id=device_id).exists():
+        if MachineDevice.objects.filter(device_id=device_id, is_active=True).exists():
             return Response({"detail": "Device already registered"}, status=status.HTTP_400_BAD_REQUEST)
         
+        # Create machine
         machine = Machine.objects.create(
-            device_id=device_id,
             outlet=outlet,
             name=name or f"Machine {device_id[-6:]}"
+        )
+        
+        # Create machine device relationship
+        MachineDevice.objects.create(
+            machine=machine,
+            device_id=device_id,
+            is_active=True
         )
         
         return Response(MachineSerializer(machine).data, status=status.HTTP_201_CREATED)

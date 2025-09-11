@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Plus, Edit, Trash2, Cpu, Wifi, Clock, Database, Activity } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
+import Footer from '../components/Footer';
 import '../App.css';
 
-const api = axios.create({ baseURL: 'http://10.172.66.5:8000/api' });
+const api = axios.create({ baseURL: 'http://10.115.106.5:8000/api' });
 
 interface Machine {
   id: number;
@@ -192,11 +193,12 @@ export default function Machines() {
         </div>
       </header>
 
-      {error && (
-        <div className="alert alert-error">
-          {error}
-        </div>
-      )}
+      <div className="page-content">
+        {error && (
+          <div className="alert alert-error">
+            {error}
+          </div>
+        )}
 
       {/* Register Device Modal */}
       {showRegisterForm && (
@@ -433,6 +435,8 @@ export default function Machines() {
           })
         )}
       </div>
+      </div>
+      <Footer />
     </div>
   );
 }
